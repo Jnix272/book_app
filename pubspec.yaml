@@ -1,0 +1,43 @@
+name: booking
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  firebase_core: ^4.4.0
+  firebase_crashlytics: ^5.0.7
+  flutter:
+    sdk: flutter
+  flutter_dotenv: ^6.0.0
+  go_router: ^17.1.0
+  google_fonts: ^8.0.2
+  intl: ^0.20.2
+  shared_preferences: ^2.5.4
+  supabase_flutter: ^2.12.0
+  firebase_performance: ^0.11.1+4
+  shimmer: ^3.0.0
+  cached_network_image: ^3.4.1
+  flutter_riverpod: ^2.6.1
+  image_picker: ^1.1.2
+  lottie: ^3.1.0
+  flutter_animate: ^4.5.0
+  dotted_border: ^2.1.0
+  smooth_page_indicator: ^1.1.0
+  pinput: ^5.0.0
+
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - .env
