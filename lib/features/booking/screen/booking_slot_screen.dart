@@ -2,15 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:go_router/go_router.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../../app_theme.dart';
-import '../../../models/models.dart';
+import '../../../domain/models/models.dart';
+import '../../../providers/repository_providers.dart';
 
 // ─────────────────────────────────────────────
 // STEP 1 — Date picker + time slot selection
 // ─────────────────────────────────────────────
 
-class BookingSlotScreen extends StatefulWidget {
+class BookingSlotScreen extends ConsumerStatefulWidget {
   final ServiceProvider provider;
   final ServiceType service;
 
@@ -21,10 +23,10 @@ class BookingSlotScreen extends StatefulWidget {
   });
 
   @override
-  State<BookingSlotScreen> createState() => _BookingSlotScreenState();
+  ConsumerState<BookingSlotScreen> createState() => _BookingSlotScreenState();
 }
 
-class _BookingSlotScreenState extends State<BookingSlotScreen> {
+class _BookingSlotScreenState extends ConsumerState<BookingSlotScreen> {
   DateTime _selectedDate = DateTime.now();
   String? _selectedSlot;
 
@@ -51,104 +53,33 @@ class _BookingSlotScreenState extends State<BookingSlotScreen> {
     });
 
     try {
-      final dayOfWeek = _selectedDate.weekday % 7;
-      final scheduleRes = await Supabase.instance.client
-          .from('provider_schedules')
-          .select('start_time, end_time')
-          .eq('provider_id', widget.provider.id)
-          .eq('day_of_week', dayOfWeek)
-          .eq('is_open', true) // new schema: is_open not is_active
-          .maybeSingle();
-
-      String startTimeStr = '09:00:00';
-      String endTimeStr = '17:00:00';
-      if (scheduleRes != null) {
-        startTimeStr = scheduleRes['start_time'] as String;
-        endTimeStr = scheduleRes['end_time'] as String;
-      }
-
-      final startParts = startTimeStr.split(':');
-      final endParts = endTimeStr.split(':');
-
-      var current = DateTime(
-        _selectedDate.year,
-        _selectedDate.month,
-        _selectedDate.day,
-        int.parse(startParts[0]),
-        int.parse(startParts[1]),
-      );
-      final end = DateTime(
-        _selectedDate.year,
-        _selectedDate.month,
-        _selectedDate.day,
-        int.parse(endParts[0]),
-        int.parse(endParts[1]),
+      final repo = ref.read(bookingRepositoryProvider);
+      final result = await repo.fetchSlots(
+        providerId: widget.provider.id,
+        selectedDate: _selectedDate,
+        serviceDurationMin: widget.service.durationMin,
       );
 
-      List<DateTime> generatedSlots = [];
-      while (current.isBefore(end)) {
-        generatedSlots.add(current);
-        current = current.add(const Duration(minutes: 30));
-      }
-
-      final startOfDay = DateTime(
-        _selectedDate.year,
-        _selectedDate.month,
-        _selectedDate.day,
-      );
-      final nextDay = startOfDay.add(const Duration(days: 1));
-
-      final apptsRes = await Supabase.instance.client
-          .from('appointments')
-          .select('appointment_datetime, duration_minutes')
-          .eq('provider_id', widget.provider.id)
-          .gte('appointment_datetime', startOfDay.toUtc().toIso8601String())
-          .lt('appointment_datetime', nextDay.toUtc().toIso8601String())
-          .neq('status', 'cancelled')
-          .neq('status', 'no_show');
-
-      List<DateTimeRange> bookedRanges = [];
-      for (var row in (apptsRes as List)) {
-        final apptStart = DateTime.parse(
-          row['appointment_datetime'] as String,
-        ).toLocal();
-        final duration = row['duration_minutes'] as int;
-        bookedRanges.add(
-          DateTimeRange(
-            start: apptStart,
-            end: apptStart.add(Duration(minutes: duration)),
-          ),
-        );
-      }
+      final rawSlots = result['allSlots'] as List<DateTime>;
+      final unavailableDateTimes = result['unavailableSlots'] as Set<DateTime>;
 
       final formatter = DateFormat('h:mm a');
-      List<String> slots = [];
-      Set<String> unavailable = {};
+      List<String> formattedSlots = [];
+      Set<String> unavailableFormatted = {};
 
-      for (var slotTime in generatedSlots) {
-        final slotEnd = slotTime.add(
-          Duration(minutes: widget.service.durationMin),
-        );
+      for (var slotTime in rawSlots) {
         final slotStr = formatter.format(slotTime);
-        slots.add(slotStr);
+        formattedSlots.add(slotStr);
 
-        bool isBooked = false;
-        for (var range in bookedRanges) {
-          if (slotTime.isBefore(range.end) && slotEnd.isAfter(range.start)) {
-            isBooked = true;
-            break;
-          }
-        }
-
-        if (isBooked || slotTime.isBefore(DateTime.now())) {
-          unavailable.add(slotStr);
+        if (unavailableDateTimes.contains(slotTime)) {
+          unavailableFormatted.add(slotStr);
         }
       }
 
       if (mounted) {
         setState(() {
-          _allSlots = slots;
-          _unavailableSlots = unavailable;
+          _allSlots = formattedSlots;
+          _unavailableSlots = unavailableFormatted;
           _isLoadingSlots = false;
         });
       }
@@ -407,236 +338,8 @@ class _BookingSlotScreenState extends State<BookingSlotScreen> {
   }
 }
 
-// ─────────────────────────────────────────────
-// STEP 2 — Confirm booking
-// ─────────────────────────────────────────────
 
-class BookingConfirmScreen extends StatefulWidget {
-  final ServiceProvider provider;
-  final ServiceType service;
-  final DateTime date;
-  final String slot;
-
-  const BookingConfirmScreen({
-    super.key,
-    required this.provider,
-    required this.service,
-    required this.date,
-    required this.slot,
-  });
-
-  @override
-  State<BookingConfirmScreen> createState() => _BookingConfirmScreenState();
-}
-
-class _BookingConfirmScreenState extends State<BookingConfirmScreen> {
-  final _notesController = TextEditingController();
-  bool _isConfirming = false;
-
-  @override
-  void dispose() {
-    _notesController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _confirmBooking() async {
-    setState(() => _isConfirming = true);
-    try {
-      final user = Supabase.instance.client.auth.currentUser;
-      if (user == null) {
-        throw Exception('User is not logged in.');
-      }
-
-      final parsedTime = DateFormat("h:mm a").parse(widget.slot);
-      final appointmentStart = DateTime(
-        widget.date.year,
-        widget.date.month,
-        widget.date.day,
-        parsedTime.hour,
-        parsedTime.minute,
-      );
-
-      final response = await Supabase.instance.client
-          .from('appointments')
-          .insert({
-            'customer_id': user.id,
-            'provider_id': widget.provider.id,
-            'service_id': widget.service.id,
-            'appointment_datetime': appointmentStart.toIso8601String(),
-            'duration_minutes': widget.service.durationMin,
-            'status': 'confirmed',
-            'notes': _notesController.text.trim().isEmpty
-                ? null
-                : _notesController.text.trim(),
-          })
-          .select('appointment_id')
-          .single();
-
-      final appointmentId = response['appointment_id'] as String;
-
-      if (mounted) {
-        context.go(
-          '/booking_confirmed',
-          extra: {
-            'provider': widget.provider,
-            'service': widget.service,
-            'date': widget.date,
-            'slot': widget.slot,
-            'appointmentId': appointmentId,
-          },
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isConfirming = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to confirm booking: $e')),
-        );
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final dateStr = DateFormat('EEEE, MMMM d').format(widget.date);
-
-    return Scaffold(
-      backgroundColor: AppColors.bg,
-      appBar: AppBar(
-        leading: const BackButton(),
-        title: const _StepIndicator(currentStep: 2),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Confirm booking',
-              style: GoogleFonts.fraunces(
-                fontSize: 26,
-                fontWeight: FontWeight.w500,
-                color: AppColors.ink,
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            // ── Summary card ──────────────────────
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  children: [
-                    _SummaryRow('Provider', widget.provider.name),
-                    const AppDivider(),
-                    _SummaryRow('Service', widget.service.name),
-                    const AppDivider(),
-                    _SummaryRow('Date', dateStr),
-                    const AppDivider(),
-                    _SummaryRow('Time', widget.slot),
-                    const AppDivider(),
-                    _SummaryRow(
-                      'Duration',
-                      '${widget.service.durationMin} min',
-                    ),
-                    const AppDivider(),
-                    _SummaryRow(
-                      'Total',
-                      '\$${widget.service.price.toStringAsFixed(2)}',
-                      highlight: true,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // ── Cancellation policy ───────────────
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Cancellation policy',
-                      style: GoogleFonts.dmSans(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.ink,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Free cancellation up to 24 hours before your appointment. Within 24 hours, a 50% fee applies.',
-                      style: GoogleFonts.dmSans(
-                        fontSize: 13,
-                        color: AppColors.muted,
-                        height: 1.6,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // ── Notes ─────────────────────────────
-            Text(
-              'Notes for provider (optional)',
-              style: GoogleFonts.dmSans(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: AppColors.ink2,
-              ),
-            ),
-            const SizedBox(height: 6),
-            TextField(
-              controller: _notesController,
-              maxLines: 3,
-              decoration: InputDecoration(
-                hintText: 'Any requests or information for your appointment…',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(
-                    color: AppColors.line,
-                    width: 1.5,
-                  ),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(
-                    color: AppColors.line,
-                    width: 1.5,
-                  ),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(
-                    color: AppColors.sage,
-                    width: 1.5,
-                  ),
-                ),
-                filled: true,
-                fillColor: AppColors.white,
-                contentPadding: const EdgeInsets.all(16),
-              ),
-            ),
-            const SizedBox(height: 32),
-
-            _isConfirming
-                ? const Center(
-                    child: CircularProgressIndicator(color: AppColors.sage),
-                  )
-                : PrimaryButton('Confirm Booking →', onTap: _confirmBooking),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── Helpers ──────────────────────────────────────────────────
+// ── Step indicator helpers ────────────────────────────────────
 
 class _StepIndicator extends StatelessWidget {
   final int currentStep;
@@ -711,45 +414,9 @@ class _StepLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    width: 32,
-    height: 1.5,
-    color: done ? AppColors.sageMid : AppColors.line,
-    margin: const EdgeInsets.symmetric(horizontal: 4),
-  );
-}
-
-class _SummaryRow extends StatelessWidget {
-  final String label;
-  final String value;
-  final bool highlight;
-
-  const _SummaryRow(this.label, this.value, {this.highlight = false});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: GoogleFonts.dmSans(
-              fontSize: highlight ? 15 : 14,
-              fontWeight: highlight ? FontWeight.w600 : FontWeight.w400,
-              color: highlight ? AppColors.ink : AppColors.muted,
-            ),
-          ),
-          Text(
-            value,
-            style: GoogleFonts.dmSans(
-              fontSize: highlight ? 18 : 14,
-              fontWeight: highlight ? FontWeight.w700 : FontWeight.w500,
-              color: highlight ? AppColors.sage : AppColors.ink,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+        width: 32,
+        height: 1.5,
+        color: done ? AppColors.sageMid : AppColors.line,
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+      );
 }

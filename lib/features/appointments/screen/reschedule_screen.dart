@@ -2,19 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app_theme.dart';
-import '../../../models/models.dart';
+import '../../../domain/models/models.dart';
+import '../../../providers/repository_providers.dart';
 
-class RescheduleScreen extends StatefulWidget {
+class RescheduleScreen extends ConsumerStatefulWidget {
   final Appointment appointment;
   const RescheduleScreen({super.key, required this.appointment});
 
   @override
-  State<RescheduleScreen> createState() => _RescheduleScreenState();
+  ConsumerState<RescheduleScreen> createState() => _RescheduleScreenState();
 }
 
-class _RescheduleScreenState extends State<RescheduleScreen> {
+class _RescheduleScreenState extends ConsumerState<RescheduleScreen> {
   DateTime _selectedDate = DateTime.now();
   String? _selectedSlot;
   bool _isLoadingSlots = false;
@@ -35,75 +36,22 @@ class _RescheduleScreenState extends State<RescheduleScreen> {
   Future<void> _fetchSlotsForDate(DateTime date) async {
     setState(() => _isLoadingSlots = true);
     try {
-      final dayOfWeek = date.weekday % 7; // Sunday=0
-      
-      // 1. Fetch provider schedule for the given day
-      final scheduleRes = await Supabase.instance.client
-          .from('provider_schedules')
-          .select('start_time, end_time')
-          .eq('provider_id', widget.appointment.providerId)
-          .eq('day_of_week', dayOfWeek)
-          .eq('is_active', true)
-          .maybeSingle();
+      // Fetch available slots from BookingRepository
+      final duration = widget.appointment.durationMin + widget.appointment.bufferMin;
+      final slotsData = await ref.read(bookingRepositoryProvider).fetchSlots(
+            providerId: widget.appointment.providerId,
+            selectedDate: date,
+            serviceDurationMin: duration,
+            intervalMin: duration,
+          );
 
-      if (scheduleRes == null) {
-        if (mounted) {
-          setState(() {
-            _availableSlots = [];
-            _isLoadingSlots = false;
-          });
-        }
-        return;
-      }
+      final allSlots = slotsData['allSlots'] as List<DateTime>;
+      final unavailable = slotsData['unavailableSlots'] as Set<DateTime>;
 
-      final startStr = scheduleRes['start_time'] as String;
-      final endStr = scheduleRes['end_time'] as String;
-
-      // naive parsing of HH:MM
-      final startParts = startStr.split(':');
-      final endParts = endStr.split(':');
-      final startTemp = DateTime(date.year, date.month, date.day, int.parse(startParts[0]), int.parse(startParts[1]));
-      final endTemp = DateTime(date.year, date.month, date.day, int.parse(endParts[0]), int.parse(endParts[1]));
-
-      // generate naive slots based on service duration + buffer
-      final slotInterval = widget.appointment.durationMin + widget.appointment.bufferMin;
-      List<String> rawSlots = [];
-      DateTime current = startTemp;
-      while (current.isBefore(endTemp)) {
-        rawSlots.add(DateFormat('h:mm a').format(current));
-        current = current.add(Duration(minutes: slotInterval));
-      }
-
-      // 2. Fetch existing appointments to block out slots
-      final startOfDayStr = DateTime(date.year, date.month, date.day).toUtc().toIso8601String();
-      final endOfDayStr = DateTime(date.year, date.month, date.day, 23, 59, 59).toUtc().toIso8601String();
-
-      final existingRes = await Supabase.instance.client
-          .from('appointments')
-          .select('appointment_datetime')
-          .eq('provider_id', widget.appointment.providerId)
-          .gte('appointment_datetime', startOfDayStr)
-          .lte('appointment_datetime', endOfDayStr)
-          .neq('status', 'cancelled'); // don't count cancelled
-
-      final blockedSlots = <String>{};
-      for (final row in (existingRes as List)) {
-        final existingDate = DateTime.parse(row['appointment_datetime']).toLocal();
-        blockedSlots.add(DateFormat('h:mm a').format(existingDate));
-      }
-
-      final now = DateTime.now();
-      final isToday = DateUtils.isSameDay(date, now);
-
-      final validSlots = rawSlots.where((s) {
-        if (blockedSlots.contains(s)) return false;
-        if (isToday) {
-          final slotTime = DateFormat('h:mm a').parse(s);
-          final fullSlot = DateTime(now.year, now.month, now.day, slotTime.hour, slotTime.minute);
-          if (!fullSlot.isAfter(now)) return false;
-        }
-        return true;
-      }).toList();
+      final validSlots = allSlots
+          .where((t) => !unavailable.contains(t))
+          .map((t) => DateFormat('h:mm a').format(t))
+          .toList();
 
       if (mounted) {
         setState(() {
@@ -139,14 +87,10 @@ class _RescheduleScreenState extends State<RescheduleScreen> {
         parsedTime.minute,
       ).toUtc().toIso8601String();
 
-      await Supabase.instance.client
-          .from('appointments')
-          .update({
-            'appointment_datetime': finalDateTime,
-            'status': 'rescheduled', // Map UI to Rescheduled Status
-            'updated_at': DateTime.now().toUtc().toIso8601String(),
-          })
-          .eq('appointment_id', widget.appointment.id);
+      await ref.read(appointmentRepositoryProvider).rescheduleAppointment(
+            widget.appointment.id,
+            finalDateTime,
+          );
 
       if (mounted) {
          context.pop(true); // Pop back to appointments list, perhaps passing true to trigger a reload

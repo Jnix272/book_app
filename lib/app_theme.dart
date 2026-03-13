@@ -19,6 +19,7 @@ class AppColors {
   static const statusConfirmedFg = Color(0xFF1E8A5A);
   static const statusPendingBg = Color(0xFFFFF8E6);
   static const statusPendingFg = Color(0xFFB87A00);
+
 }
 
 class AppTheme {

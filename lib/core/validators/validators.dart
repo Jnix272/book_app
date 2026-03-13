@@ -75,10 +75,23 @@ String? validatePassword(String? value) {
 }
 
 // ── Confirm password ─────────────────────────────────────────────────────────
-
 String? validateConfirm(String? value, String password) {
   final v = value ?? '';
   if (v.isEmpty) return 'Please confirm your password';
   if (v != password) return 'Passwords do not match';
+  return null;
+}
+
+// ── Notes ────────────────────────────────────────────────────────────────────
+String? validateNotes(String? value) {
+  final v = value ?? '';
+  if (v.length > 500) return 'Notes cannot exceed 500 characters';
+  return null;
+}
+
+// ── Price ───────────────────────────────────────────────────────────────────
+String? validatePrice(double? value) {
+  if (value == null) return 'Price cannot be empty';
+  if (value < 0) return 'Price cannot be negative';
   return null;
 }

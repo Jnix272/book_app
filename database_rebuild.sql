@@ -398,6 +398,78 @@ CREATE POLICY "appointments_update"
   );
 
 -- ============================================================================
+-- TABLE: appointment_history
+-- Immutable audit trail for every appointment change (FR-3.10)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.appointment_history (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  appointment_id  UUID NOT NULL REFERENCES public.appointments(appointment_id) ON DELETE CASCADE,
+  changed_by      UUID REFERENCES public.users(user_id),   -- null = system
+  old_status      TEXT,
+  new_status      TEXT,
+  old_starts_at   TIMESTAMPTZ,
+  new_starts_at   TIMESTAMPTZ,
+  change_note     TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE public.appointment_history IS
+  'Immutable record of every status or time change on an appointment.';
+
+CREATE INDEX IF NOT EXISTS idx_appt_hist_appointment_id ON public.appointment_history(appointment_id);
+
+ALTER TABLE public.appointment_history ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "appointment_history_select"
+  ON public.appointment_history FOR SELECT
+  USING (
+    appointment_id IN (
+      SELECT appointment_id FROM public.appointments
+      WHERE customer_id = (SELECT auth.uid()) OR provider_id IN (
+        SELECT provider_id FROM public.providers WHERE user_id = (SELECT auth.uid())
+      )
+    )
+  );
+
+CREATE POLICY "appointment_history_insert"
+  ON public.appointment_history FOR INSERT
+  WITH CHECK (
+    changed_by = (SELECT auth.uid())
+  );
+
+-- ============================================================================
+-- TABLE: audit_log
+-- System-wide event log (FR-6.3 / 7.3)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.audit_log (
+  id          BIGSERIAL PRIMARY KEY,
+  actor_id    UUID REFERENCES public.users(user_id),  -- null = system/anonymous
+  action      TEXT NOT NULL,                 -- e.g. 'login', 'book_appointment'
+  entity_type TEXT,                          -- e.g. 'appointment', 'provider'
+  entity_id   UUID,
+  metadata    JSONB,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE public.audit_log IS
+  'Append-only event log for logins, bookings, cancellations, and other key actions.';
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_actor      ON public.audit_log(actor_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON public.audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_entity     ON public.audit_log(entity_type, entity_id);
+
+ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "audit_log_select_own"
+  ON public.audit_log FOR SELECT
+  USING (actor_id = (SELECT auth.uid()));
+
+CREATE POLICY "audit_log_insert_own"
+  ON public.audit_log FOR INSERT
+  WITH CHECK (actor_id = (SELECT auth.uid()));
+
+-- ============================================================================
 -- TABLE: favorites
 -- ============================================================================
 

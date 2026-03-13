@@ -3,27 +3,26 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../app_theme.dart';
-import '../../../models/models.dart';
+import '../../../domain/models/models.dart';
 
 class BookingConfirmedScreen extends StatelessWidget {
   final ServiceProvider provider;
   final ServiceType service;
-  final DateTime date;
-  final String slot;
+  final DateTime slotDateTime;
   final String appointmentId;
 
   const BookingConfirmedScreen({
     super.key,
     required this.provider,
     required this.service,
-    required this.date,
-    required this.slot,
+    required this.slotDateTime,
     required this.appointmentId,
   });
 
   @override
   Widget build(BuildContext context) {
-    final dateStr = DateFormat('EEE, MMM d').format(date);
+    final dateStr = DateFormat('EEE, MMM d').format(slotDateTime);
+    final timeStr = DateFormat('h:mm a').format(slotDateTime);
     final reference = '#BK-${appointmentId.substring(0, 6).toUpperCase()}';
 
     return Scaffold(
@@ -114,7 +113,7 @@ class BookingConfirmedScreen extends StatelessWidget {
                       _ConfirmRow(
                         icon: Icons.calendar_today_outlined,
                         label: 'Date & Time',
-                        value: '$dateStr · $slot',
+                        value: '$dateStr · $timeStr',
                       ),
                       const AppDivider(),
                       _ConfirmRow(
@@ -136,7 +135,11 @@ class BookingConfirmedScreen extends StatelessWidget {
                           children: [
                             Row(
                               children: [
-                                const Icon(Icons.tag, size: 16, color: AppColors.muted),
+                                const Icon(
+                                  Icons.tag,
+                                  size: 16,
+                                  color: AppColors.muted,
+                                ),
                                 const SizedBox(width: 8),
                                 Text(
                                   'Reference',
@@ -174,8 +177,11 @@ class BookingConfirmedScreen extends StatelessWidget {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.notifications_outlined,
-                        color: AppColors.sage, size: 18),
+                    const Icon(
+                      Icons.notifications_outlined,
+                      color: AppColors.sage,
+                      size: 18,
+                    ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -201,7 +207,10 @@ class BookingConfirmedScreen extends StatelessWidget {
                       onPressed: () => context.go('/', extra: {'tab': 1}),
                       style: OutlinedButton.styleFrom(
                         minimumSize: const Size(0, 52),
-                        side: const BorderSide(color: AppColors.line, width: 1.5),
+                        side: const BorderSide(
+                          color: AppColors.line,
+                          width: 1.5,
+                        ),
                         foregroundColor: AppColors.ink,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -245,31 +254,34 @@ class _ConfirmRow extends StatelessWidget {
   final IconData icon;
   final String label;
   final String value;
-  const _ConfirmRow(
-      {required this.icon, required this.label, required this.value});
+  const _ConfirmRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        child: Row(
-          children: [
-            Icon(icon, size: 16, color: AppColors.muted),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: GoogleFonts.dmSans(fontSize: 14, color: AppColors.muted),
-            ),
-            const Spacer(),
-            Text(
-              value,
-              style: GoogleFonts.dmSans(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: AppColors.ink,
-              ),
-              textAlign: TextAlign.right,
-            ),
-          ],
+    padding: const EdgeInsets.symmetric(vertical: 12),
+    child: Row(
+      children: [
+        Icon(icon, size: 16, color: AppColors.muted),
+        const SizedBox(width: 8),
+        Text(
+          label,
+          style: GoogleFonts.dmSans(fontSize: 14, color: AppColors.muted),
         ),
-      );
+        const Spacer(),
+        Text(
+          value,
+          style: GoogleFonts.dmSans(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: AppColors.ink,
+          ),
+          textAlign: TextAlign.right,
+        ),
+      ],
+    ),
+  );
 }

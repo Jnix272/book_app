@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app_theme.dart';
-import '../../../models/models.dart';
+import '../../../domain/models/models.dart';
+import '../../../providers/repository_providers.dart';
 
-class ProviderApptDetailScreen extends StatefulWidget {
+class ProviderApptDetailScreen extends ConsumerStatefulWidget {
   final ProviderAppointment appt;
   final VoidCallback? onStatusChanged;
 
@@ -16,11 +17,11 @@ class ProviderApptDetailScreen extends StatefulWidget {
   });
 
   @override
-  State<ProviderApptDetailScreen> createState() =>
+  ConsumerState<ProviderApptDetailScreen> createState() =>
       _ProviderApptDetailScreenState();
 }
 
-class _ProviderApptDetailScreenState extends State<ProviderApptDetailScreen> {
+class _ProviderApptDetailScreenState extends ConsumerState<ProviderApptDetailScreen> {
   late String _status;
 
   @override
@@ -30,25 +31,14 @@ class _ProviderApptDetailScreenState extends State<ProviderApptDetailScreen> {
   }
 
   Future<void> _updateStatus(String newStatus, {String? reason}) async {
-    final dbStatus = switch (newStatus) {
-      'Confirmed' => 'confirmed',
-      'Cancelled' => 'cancelled',
-      'Completed' => 'completed',
-      'No Show' => 'no_show',
-      'Pending' => 'pending',
-      _ => throw ArgumentError('Unknown appointment status: $newStatus'),
-    };
-
-    final updates = <String, dynamic>{'status': dbStatus};
-    if (reason != null && reason.isNotEmpty) {
-      updates['cancellation_reason'] = reason;
-    }
 
     try {
-      await Supabase.instance.client
-          .from('appointments')
-          .update(updates)
-          .eq('appointment_id', widget.appt.id);
+      final success = await ref.read(appointmentRepositoryProvider)
+          .updateAppointmentStatus(widget.appt.id, newStatus, reason: reason);
+
+      if (!success) {
+        throw Exception('Failed to update status in repository');
+      }
 
       if (mounted) {
         setState(() => _status = newStatus);

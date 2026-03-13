@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../data/repositories/auth_repository.dart';
+import 'repository_providers.dart';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -35,12 +37,14 @@ final class SignInFailure extends SignInState {
 /// auth-state-change event, loads the profile (including role), and
 /// GoRouter's redirect sends the user to the correct home screen automatically.
 class SignInNotifier extends StateNotifier<SignInState> {
-  SignInNotifier() : super(const SignInInitial());
+  final AuthRepository _authRepo;
+
+  SignInNotifier(this._authRepo) : super(const SignInInitial());
 
   Future<void> signIn(String email, String password) async {
     state = const SignInLoading();
     try {
-      final response = await Supabase.instance.client.auth.signInWithPassword(
+      final response = await _authRepo.signIn(
         email: email.trim(),
         password: password,
       );
@@ -82,5 +86,6 @@ class SignInNotifier extends StateNotifier<SignInState> {
 /// autoDispose so the state resets every time the sign-in screen is popped.
 final signInProvider =
     StateNotifierProvider.autoDispose<SignInNotifier, SignInState>((ref) {
-      return SignInNotifier();
+      final authRepo = ref.watch(authRepositoryProvider);
+      return SignInNotifier(authRepo);
     });

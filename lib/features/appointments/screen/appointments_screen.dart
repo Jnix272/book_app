@@ -1,72 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app_theme.dart';
-import '../../../models/models.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../domain/models/models.dart';
+import '../../../providers/customer_providers.dart';
+import '../../../providers/repository_providers.dart';
 import 'package:go_router/go_router.dart';
 
 // ─────────────────────────────────────────────
 // My Appointments screen
 // ─────────────────────────────────────────────
 
-class AppointmentsScreen extends StatefulWidget {
+class AppointmentsScreen extends ConsumerStatefulWidget {
   const AppointmentsScreen({super.key});
 
   @override
-  State<AppointmentsScreen> createState() => _AppointmentsScreenState();
+  ConsumerState<AppointmentsScreen> createState() => _AppointmentsScreenState();
 }
 
-class _AppointmentsScreenState extends State<AppointmentsScreen>
+class _AppointmentsScreenState extends ConsumerState<AppointmentsScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  late List<Appointment> _upcoming = [];
-  late List<Appointment> _past = [];
-  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _fetchAppointments();
-  }
-
-  Future<void> _fetchAppointments() async {
-    try {
-      final user = Supabase.instance.client.auth.currentUser;
-      if (user == null) {
-        if (mounted) setState(() => _isLoading = false);
-        return;
-      }
-
-      final res = await Supabase.instance.client
-          .from('appointments')
-          .select(
-            '*, providers(business_name), services(service_name, price, duration_minutes)',
-          )
-          .eq('customer_id', user.id)
-          .order('appointment_datetime', ascending: true);
-
-      final now = DateTime.now();
-      final allAppts = (res as List)
-          .map((a) => Appointment.fromJson(a))
-          .toList();
-
-      if (mounted) {
-        setState(() {
-          _upcoming = allAppts.where((a) => a.startsAt.isAfter(now)).toList();
-          _past = allAppts.where((a) => a.startsAt.isBefore(now)).toList();
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load appointments: $e')),
-        );
-      }
-    }
   }
 
   @override
@@ -77,6 +37,14 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
 
   @override
   Widget build(BuildContext context) {
+    final apptsAsync = ref.watch(customerAppointmentsProvider);
+    final allAppts = apptsAsync.valueOrNull ?? [];
+    final now = DateTime.now();
+    final upcomingList = allAppts
+        .where((a) => a.startsAt.isAfter(now))
+        .toList();
+    final pastList = allAppts.where((a) => a.startsAt.isBefore(now)).toList();
+
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
@@ -121,14 +89,14 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
               ),
               unselectedLabelStyle: GoogleFonts.dmSans(fontSize: 14),
               tabs: [
-                Tab(text: 'Upcoming (${_upcoming.length})'),
-                Tab(text: 'Past (${_past.length})'),
+                Tab(text: 'Upcoming (${upcomingList.length})'),
+                Tab(text: 'Past (${pastList.length})'),
               ],
             ),
           ),
         ),
       ),
-      body: _isLoading
+      body: apptsAsync.isLoading
           ? const Center(
               child: CircularProgressIndicator(color: AppColors.sage),
             )
@@ -136,7 +104,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
               controller: _tabController,
               children: [
                 _AppointmentList(
-                  appointments: _upcoming,
+                  appointments: upcomingList,
                   emptyMessage: 'No upcoming appointments',
                   emptySubtext: 'Book your first appointment to get started',
                   emptyEmoji: '📅',
@@ -146,12 +114,12 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
                       extra: appt,
                     );
                     if (result == true) {
-                      _fetchAppointments();
+                      ref.invalidate(customerAppointmentsProvider);
                     }
                   },
                 ),
                 _AppointmentList(
-                  appointments: _past,
+                  appointments: pastList,
                   emptyMessage: 'No past appointments',
                   emptySubtext: 'Your completed appointments will appear here',
                   emptyEmoji: '🗓️',
@@ -161,7 +129,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
                       extra: appt,
                     );
                     if (result == true) {
-                      _fetchAppointments();
+                      ref.invalidate(customerAppointmentsProvider);
                     }
                   },
                 ),
@@ -310,7 +278,7 @@ class _AppointmentList extends StatelessWidget {
 // Appointment Detail screen
 // ─────────────────────────────────────────────
 
-class AppointmentDetailScreen extends StatelessWidget {
+class AppointmentDetailScreen extends ConsumerWidget {
   final Appointment appointment;
   final VoidCallback? onCancelled;
 
@@ -324,7 +292,7 @@ class AppointmentDetailScreen extends StatelessWidget {
       appointment.status == 'Confirmed' || appointment.status == 'Pending';
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final dateStr = DateFormat(
       'EEEE, MMMM d, yyyy',
     ).format(appointment.startsAt);
@@ -520,7 +488,7 @@ class AppointmentDetailScreen extends StatelessWidget {
                 width: double.infinity,
                 height: 52,
                 child: OutlinedButton(
-                  onPressed: () => _showCancelSheet(context),
+                  onPressed: () => _showCancelSheet(context, ref),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.red,
                     side: const BorderSide(
@@ -579,7 +547,7 @@ class AppointmentDetailScreen extends StatelessWidget {
     );
   }
 
-  void _showCancelSheet(BuildContext context) {
+  void _showCancelSheet(BuildContext context, WidgetRef ref) {
     String selectedReason = 'Change of plans';
     showModalBottomSheet(
       context: context,
@@ -704,15 +672,12 @@ class AppointmentDetailScreen extends StatelessWidget {
                     child: ElevatedButton(
                       onPressed: () async {
                         try {
-                          await Supabase.instance.client
-                              .from('appointments')
-                              .update({
-                                'status': 'cancelled',
-                                'updated_at': DateTime.now()
-                                    .toUtc()
-                                    .toIso8601String(),
-                              })
-                              .eq('appointment_id', appointment.id);
+                          await ref
+                              .read(appointmentRepositoryProvider)
+                              .updateAppointmentStatus(
+                                appointment.id,
+                                'Cancelled',
+                              );
 
                           if (context.mounted) {
                             context.pop(); // Close the modal

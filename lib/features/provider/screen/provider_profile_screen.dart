@@ -1,130 +1,39 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app_theme.dart';
 import 'package:booking/core/services/provider_session.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../core/services/avatar_service.dart';
+import '../../../providers/provider_dashboard_providers.dart';
+import '../../../providers/repository_providers.dart';
 
-class ProviderProfileScreen extends StatefulWidget {
+class ProviderProfileScreen extends ConsumerStatefulWidget {
   const ProviderProfileScreen({super.key});
 
   @override
-  State<ProviderProfileScreen> createState() => _ProviderProfileScreenState();
+  ConsumerState<ProviderProfileScreen> createState() => _ProviderProfileScreenState();
 }
 
-class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
+class _ProviderProfileScreenState extends ConsumerState<ProviderProfileScreen> {
   // ── Data from DB ──────────────────────────
-  bool _isLoading = true;
-  String _businessName = '';
-  String _category = '';
-  String _address = '';
-  String _email = '';
-  String _phone = '';
-  String _description = '';
-  double _rating = 0;
-  int _reviewCount = 0;
-  int _serviceCount = 0;
-  String? _avatarUrl;
-  String? _providerId;
   bool _avatarUploading = false;
-
-  // ── Notification toggles (backed by users table) ──
-  bool _emailNewBooking = true;
-  bool _emailCancel = true;
-  bool _smsReminder = false;
-  bool _inAppUpdates = true;
-  bool _dailySummary = false;
-
-  // ── Business settings ─────────────────────
-  bool _autoConfirm = false;
-  bool _allowReschedule = true;
-  bool _showRating = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadProfile();
-  }
-
-  Future<void> _loadProfile() async {
-    final uid = Supabase.instance.client.auth.currentUser?.id;
-    if (uid == null) {
-      setState(() => _isLoading = false);
-      return;
-    }
-
-    try {
-      // Join providers + users in one go
-      final provRow = await Supabase.instance.client
-          .from('providers')
-          .select(
-            'provider_id, business_name, category, address, city, state, bio, average_rating, total_reviews, avatar_url, users!inner(email, phone, notification_email, notification_sms, notification_push)',
-          )
-          .eq('user_id', uid)
-          .maybeSingle();
-
-      if (provRow != null) {
-        final userMap = provRow['users'] as Map<String, dynamic>? ?? {};
-
-        // Count services
-        final svcRes = await Supabase.instance.client
-            .from('services')
-            .select('service_id')
-            .eq('provider_id', provRow['provider_id'] as String);
-
-        if (mounted) {
-          setState(() {
-            _providerId = provRow['provider_id'] as String?;
-            _businessName = provRow['business_name'] as String? ?? '';
-            _category = provRow['category'] as String? ?? '';
-            _address = [
-              provRow['address'],
-              provRow['city'],
-              provRow['state'],
-            ].whereType<String>().where((s) => s.isNotEmpty).join(', ');
-            _description = provRow['bio'] as String? ?? '';
-            _rating =
-                double.tryParse(provRow['average_rating']?.toString() ?? '0') ??
-                0;
-            _reviewCount = provRow['total_reviews'] as int? ?? 0;
-            _serviceCount = (svcRes as List).length;
-            _avatarUrl = provRow['avatar_url'] as String?;
-
-            _email = userMap['email'] as String? ?? '';
-            _phone = userMap['phone'] as String? ?? '';
-            _emailNewBooking = userMap['notification_email'] as bool? ?? true;
-            _smsReminder = userMap['notification_sms'] as bool? ?? false;
-            _inAppUpdates = userMap['notification_push'] as bool? ?? true;
-          });
-        }
-      }
-    } catch (e) {
-      debugPrint('Error loading provider profile: $e');
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
 
   Future<void> _saveToggle({
     required String column,
     required bool value,
     required String table,
+    required String? providerId,
   }) async {
-    final uid = Supabase.instance.client.auth.currentUser?.id;
+    final uid = ref.read(currentProviderIdProvider);
     if (uid == null) return;
     try {
       if (table == 'users') {
-        await Supabase.instance.client
-            .from('users')
-            .update({column: value})
-            .eq('user_id', uid);
-      } else if (table == 'providers' && _providerId != null) {
-        await Supabase.instance.client
-            .from('providers')
-            .update({column: value})
-            .eq('provider_id', _providerId!);
+        await ref.read(providerRepositoryProvider).updateUserToggle(uid, column, value);
+      } else if (table == 'providers' && providerId != null) {
+        await ref.read(providerRepositoryProvider).updateProviderToggle(providerId, column, value);
       }
+      ref.invalidate(providerBusinessProfileProvider);
     } catch (e) {
       debugPrint('Error saving toggle $column: $e');
     }
@@ -132,12 +41,46 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
+    final profileAsync = ref.watch(providerBusinessProfileProvider);
+    final servicesAsync = ref.watch(providerServicesListProvider);
+
+    if (profileAsync.isLoading || servicesAsync.isLoading) {
       return const Scaffold(
         backgroundColor: AppColors.bg,
         body: Center(child: CircularProgressIndicator(color: AppColors.amber)),
       );
     }
+
+    final profile = profileAsync.valueOrNull ?? {};
+    final usersMap = profile['users'] as Map<String, dynamic>? ?? {};
+
+    final _providerId = profile['provider_id'] as String?;
+    final _businessName = profile['business_name'] as String? ?? '';
+    final _category = profile['category'] as String? ?? '';
+    final _description = profile['bio'] as String? ?? '';
+    final _rating = double.tryParse(profile['average_rating']?.toString() ?? '0') ?? 0;
+    final _reviewCount = profile['total_reviews'] as int? ?? 0;
+    final _avatarUrl = profile['avatar_url'] as String?;
+    final _address = [
+      profile['address'],
+      profile['city'],
+      profile['state'],
+    ].whereType<String>().where((s) => s.isNotEmpty).join(', ');
+
+    final _email = usersMap['email'] as String? ?? '';
+    final _phone = usersMap['phone'] as String? ?? '';
+    
+    final _emailNewBooking = usersMap['notification_email'] as bool? ?? true;
+    final _emailCancel = usersMap['notification_email_cancel'] as bool? ?? true;
+    final _smsReminder = usersMap['notification_sms'] as bool? ?? false;
+    final _inAppUpdates = usersMap['notification_push'] as bool? ?? true;
+    final _dailySummary = usersMap['notification_daily_summary'] as bool? ?? false;
+
+    final _autoConfirm = profile['auto_confirm'] as bool? ?? false;
+    final _allowReschedule = profile['allow_reschedule'] as bool? ?? true;
+    final _showRating = profile['show_rating'] as bool? ?? true;
+
+    final _serviceCount = servicesAsync.valueOrNull?.length ?? 0;
 
     final ratingStr = _rating > 0 ? '${_rating.toStringAsFixed(1)} ⭐' : '—';
     final categoryLine = [
@@ -164,7 +107,15 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
         shape: const Border(bottom: BorderSide(color: AppColors.line)),
         actions: [
           TextButton(
-            onPressed: () => _showEditBusinessSheet(context),
+            onPressed: () => _showEditBusinessSheet(
+              context,
+              _businessName,
+              _email,
+              _phone,
+              _address,
+              _description,
+              _providerId,
+            ),
             child: Text(
               'Edit',
               style: GoogleFonts.dmSans(
@@ -197,9 +148,9 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
                         shape: BoxShape.circle,
                       ),
                       clipBehavior: Clip.antiAlias,
-                      child: _avatarUrl != null && _avatarUrl!.isNotEmpty
+                      child: _avatarUrl != null && _avatarUrl.isNotEmpty
                           ? CachedNetworkImage(
-                              imageUrl: _avatarUrl!,
+                              imageUrl: _avatarUrl,
                               fit: BoxFit.cover,
                               placeholder: (context, url) => Center(
                                 child: CircularProgressIndicator(
@@ -236,7 +187,7 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
                       bottom: 0,
                       right: 0,
                       child: GestureDetector(
-                        onTap: _pickAvatar,
+                        onTap: () => _pickAvatar(_providerId),
                         child: Container(
                           width: 28,
                           height: 28,
@@ -337,11 +288,11 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
                   subtitle: 'Email when a customer books',
                   value: _emailNewBooking,
                   onChanged: (v) {
-                    setState(() => _emailNewBooking = v);
                     _saveToggle(
                       column: 'notification_email',
                       value: v,
                       table: 'users',
+                      providerId: _providerId,
                     );
                   },
                 ),
@@ -352,11 +303,11 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
                   subtitle: 'Email when a booking is cancelled',
                   value: _emailCancel,
                   onChanged: (v) {
-                    setState(() => _emailCancel = v);
                     _saveToggle(
                       column: 'notification_email_cancel',
                       value: v,
                       table: 'users',
+                      providerId: _providerId,
                     );
                   },
                 ),
@@ -367,11 +318,11 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
                   subtitle: '2 hours before each appointment',
                   value: _smsReminder,
                   onChanged: (v) {
-                    setState(() => _smsReminder = v);
                     _saveToggle(
                       column: 'notification_sms',
                       value: v,
                       table: 'users',
+                      providerId: _providerId,
                     );
                   },
                 ),
@@ -382,11 +333,11 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
                   subtitle: 'Status changes and messages',
                   value: _inAppUpdates,
                   onChanged: (v) {
-                    setState(() => _inAppUpdates = v);
                     _saveToggle(
                       column: 'notification_push',
                       value: v,
                       table: 'users',
+                      providerId: _providerId,
                     );
                   },
                 ),
@@ -397,11 +348,11 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
                   subtitle: 'Morning overview of the day\'s bookings',
                   value: _dailySummary,
                   onChanged: (v) {
-                    setState(() => _dailySummary = v);
                     _saveToggle(
                       column: 'notification_daily_summary',
                       value: v,
                       table: 'users',
+                      providerId: _providerId,
                     );
                   },
                 ),
@@ -423,11 +374,11 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
                   subtitle: 'Automatically confirm all new bookings',
                   value: _autoConfirm,
                   onChanged: (v) {
-                    setState(() => _autoConfirm = v);
                     _saveToggle(
                       column: 'auto_confirm',
                       value: v,
                       table: 'providers',
+                      providerId: _providerId,
                     );
                   },
                   accentColor: AppColors.amber,
@@ -439,11 +390,11 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
                   subtitle: 'Up to 24 hours before appointment',
                   value: _allowReschedule,
                   onChanged: (v) {
-                    setState(() => _allowReschedule = v);
                     _saveToggle(
                       column: 'allow_reschedule',
                       value: v,
                       table: 'providers',
+                      providerId: _providerId,
                     );
                   },
                 ),
@@ -454,11 +405,11 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
                   subtitle: 'Display your star rating to customers',
                   value: _showRating,
                   onChanged: (v) {
-                    setState(() => _showRating = v);
                     _saveToggle(
                       column: 'show_rating',
                       value: v,
                       table: 'providers',
+                      providerId: _providerId,
                     );
                   },
                 ),
@@ -589,12 +540,20 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
 
   // ── Bottom sheets & dialogs ──────────────────
 
-  void _showEditBusinessSheet(BuildContext context) {
-    final nameCtrl = TextEditingController(text: _businessName);
-    final emailCtrl = TextEditingController(text: _email);
-    final phoneCtrl = TextEditingController(text: _phone);
-    final addrCtrl = TextEditingController(text: _address);
-    final descCtrl = TextEditingController(text: _description);
+  void _showEditBusinessSheet(
+    BuildContext context,
+    String businessName,
+    String email,
+    String phone,
+    String address,
+    String description,
+    String? providerId,
+  ) {
+    final nameCtrl = TextEditingController(text: businessName);
+    final emailCtrl = TextEditingController(text: email);
+    final phoneCtrl = TextEditingController(text: phone);
+    final addrCtrl = TextEditingController(text: address);
+    final descCtrl = TextEditingController(text: description);
     bool saving = false;
 
     showModalBottomSheet(
@@ -633,43 +592,34 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
                       : () async {
                           setSheet(() => saving = true);
                           final uid =
-                              Supabase.instance.client.auth.currentUser?.id;
+                              ref.read(providerRepositoryProvider).currentUserId;
 
                           // Capture navigator and messenger before await
                           final nav = Navigator.of(ctx);
                           final msg = ScaffoldMessenger.of(context);
 
-                          if (uid != null && _providerId != null) {
+                          if (uid != null && providerId != null) {
                             try {
                               await Future.wait([
-                                Supabase.instance.client
-                                    .from('providers')
-                                    .update({
-                                      'business_name': nameCtrl.text.trim(),
-                                      'bio': descCtrl.text.trim(),
-                                      'address': addrCtrl.text.trim(),
-                                    })
-                                    .eq('provider_id', _providerId!),
-                                Supabase.instance.client
-                                    .from('users')
-                                    .update({
-                                      'email': emailCtrl.text.trim(),
-                                      'phone': phoneCtrl.text.trim(),
-                                    })
-                                    .eq('user_id', uid),
+                                ref.read(providerRepositoryProvider).updateProviderDetails(
+                                  providerId: providerId,
+                                  businessName: nameCtrl.text.trim(),
+                                  bio: descCtrl.text.trim(),
+                                  address: addrCtrl.text.trim(),
+                                ),
+                                ref.read(providerRepositoryProvider).updateUserDetails(
+                                  userId: uid,
+                                  email: emailCtrl.text.trim(),
+                                  phone: phoneCtrl.text.trim(),
+                                ),
                               ]);
 
                               // Force cache refresh in case business name changed
                               await ProviderSession.instance.refresh();
 
+                              ref.invalidate(providerBusinessProfileProvider);
+                              
                               if (!mounted) return;
-                              setState(() {
-                                _businessName = nameCtrl.text.trim();
-                                _email = emailCtrl.text.trim();
-                                _phone = phoneCtrl.text.trim();
-                                _address = addrCtrl.text.trim();
-                                _description = descCtrl.text.trim();
-                              });
                               nav.pop();
                               msg.showSnackBar(
                                 SnackBar(
@@ -785,9 +735,8 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
                         final nav = Navigator.of(ctx);
                         final msg = ScaffoldMessenger.of(context);
                         try {
-                          await Supabase.instance.client.auth.updateUser(
-                            UserAttributes(password: newPwd),
-                          );
+                          await ref.read(authRepositoryProvider).updatePassword(newPwd);
+                          if (!mounted) return;
                           nav.pop();
                           msg.showSnackBar(
                             SnackBar(
@@ -802,16 +751,16 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
                               ),
                             ),
                           );
-                        } on AuthException catch (e) {
+                        } catch (e) {
                           setSheet(() => saving = false);
-                          msg.showSnackBar(
-                            SnackBar(
-                              content: Text('Error: ${e.message}'),
-                              backgroundColor: AppColors.red,
-                            ),
-                          );
-                        } catch (_) {
-                          setSheet(() => saving = false);
+                          if (mounted) {
+                            msg.showSnackBar(
+                              SnackBar(
+                                content: Text('Error: $e'),
+                                backgroundColor: AppColors.red,
+                              ),
+                            );
+                          }
                         }
                       },
               ),
@@ -997,7 +946,7 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
           TextButton(
             onPressed: () async {
               Navigator.pop(context); // close dialog
-              await Supabase.instance.client.auth.signOut();
+              await ref.read(authRepositoryProvider).signOut();
             },
             child: Text(
               'Sign Out',
@@ -1012,9 +961,9 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
     );
   }
 
-  Future<void> _pickAvatar() async {
-    final uid = Supabase.instance.client.auth.currentUser?.id;
-    if (uid == null || _providerId == null) return;
+  Future<void> _pickAvatar(String? providerId) async {
+    final uid = ref.read(currentProviderIdProvider);
+    if (uid == null || providerId == null) return;
     setState(() => _avatarUploading = true);
     final url = await AvatarService.instance.pickAndUpload(
       context: context,
@@ -1022,11 +971,9 @@ class _ProviderProfileScreenState extends State<ProviderProfileScreen> {
       userId: uid,
     );
     if (url != null) {
-      await Supabase.instance.client
-          .from('providers')
-          .update({'avatar_url': url})
-          .eq('provider_id', _providerId!);
-      if (mounted) setState(() => _avatarUrl = url);
+      await ref.read(providerRepositoryProvider).updateProviderAvatar(providerId, url);
+      
+      ref.invalidate(providerBusinessProfileProvider);
     }
     if (mounted) setState(() => _avatarUploading = false);
   }

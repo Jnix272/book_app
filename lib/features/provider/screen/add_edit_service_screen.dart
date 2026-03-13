@@ -1,20 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app_theme.dart';
-import '../../../core/services/provider_session.dart';
-import '../../../models/models.dart';
+import '../../../domain/models/models.dart';
+import '../../../providers/provider_dashboard_providers.dart';
+import '../../../providers/repository_providers.dart';
 import '../../../widgets/auth_widgets.dart';
 
-class AddEditServiceScreen extends StatefulWidget {
+class AddEditServiceScreen extends ConsumerStatefulWidget {
   final ServiceItem? service;
   const AddEditServiceScreen({super.key, this.service});
 
   @override
-  State<AddEditServiceScreen> createState() => _AddEditServiceScreenState();
+  ConsumerState<AddEditServiceScreen> createState() => _AddEditServiceScreenState();
 }
 
-class _AddEditServiceScreenState extends State<AddEditServiceScreen> {
+class _AddEditServiceScreenState extends ConsumerState<AddEditServiceScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameCtrl;
   late final TextEditingController _descCtrl;
@@ -51,7 +52,7 @@ class _AddEditServiceScreenState extends State<AddEditServiceScreen> {
     setState(() => _isSaving = true);
 
     try {
-      final providerId = await ProviderSession.instance.providerId;
+      final providerId = ref.read(currentProviderIdProvider);
       if (providerId == null) throw Exception("User not authenticated.");
 
       final finalPrice = double.tryParse(_priceCtrl.text) ?? 0.0;
@@ -67,13 +68,10 @@ class _AddEditServiceScreenState extends State<AddEditServiceScreen> {
 
       if (widget.service == null) {
         // Create
-        await Supabase.instance.client.from('services').insert(payload);
+        await ref.read(providerRepositoryProvider).addService(payload);
       } else {
         // Update
-        await Supabase.instance.client
-            .from('services')
-            .update(payload)
-            .eq('service_id', widget.service!.id);
+        await ref.read(providerRepositoryProvider).updateService(widget.service!.id, payload);
       }
 
       if (mounted) {

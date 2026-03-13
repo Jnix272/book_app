@@ -2,8 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../data/repositories/auth_repository.dart';
+import 'repository_providers.dart';
 import '../core/services/provider_session.dart';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -56,7 +57,9 @@ final class AuthUnauthenticated extends AuthState {
 /// `public.users` after each sign-in. The router's `refreshListenable`
 /// should point to [AuthStateListenable], which wraps this notifier.
 class AuthNotifier extends StateNotifier<AuthState> {
-  AuthNotifier() : super(const AuthInitial());
+  final AuthRepository _authRepo;
+
+  AuthNotifier(this._authRepo) : super(const AuthInitial());
 
   // ignore: cancel_subscriptions
   StreamSubscription<dynamic>? _authSub;
@@ -78,7 +81,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     state = const AuthLoading();
 
     try {
-      final session = Supabase.instance.client.auth.currentSession;
+      final session = _authRepo.currentSession;
       if (session != null) {
         await _loadProfile(session.user.id);
       } else {
@@ -90,7 +93,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
 
     // Subscribe to future auth state changes (sign-in, sign-out, token refresh)
-    _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((
+    _authSub = _authRepo.onAuthStateChange.listen((
       data,
     ) async {
       final session = data.session;
@@ -118,11 +121,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// Fetch `public.users` row and emit [AuthAuthenticated].
   Future<void> _loadProfile(String uid) async {
     try {
-      final data = await Supabase.instance.client
-          .from('users')
-          .select()
-          .eq('user_id', uid)
-          .maybeSingle();
+      final data = await _authRepo.loadProfile(uid);
 
       state = AuthAuthenticated(
         userId: uid,
@@ -137,7 +136,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   Future<void> logout() async {
-    await Supabase.instance.client.auth.signOut();
+    await _authRepo.signOut();
     // onAuthStateChange listener above handles the state transition.
   }
 
@@ -151,7 +150,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
 // ── Providers ─────────────────────────────────────────────────────────────────
 
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
-  return AuthNotifier();
+  final authRepo = ref.watch(authRepositoryProvider);
+  return AuthNotifier(authRepo);
 });
 
 // ── GoRouter Listenable bridge ────────────────────────────────────────────────

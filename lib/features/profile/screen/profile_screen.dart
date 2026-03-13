@@ -1,82 +1,35 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app_theme.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:go_router/go_router.dart';
-import 'package:booking/core/services/auth_session.dart';
-import '../../../core/services/favorites_service.dart';
+import '../../../providers/customer_providers.dart';
+import '../../../providers/repository_providers.dart';
+import '../../../providers/auth_provider.dart';
 
-class ProfileScreen extends StatefulWidget {
+class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
 
   @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
-}
+  Widget build(BuildContext context, WidgetRef ref) {
+    final authState = ref.watch(authProvider);
+    final isInitializing = ref.read(authProvider.notifier).isInitializing;
 
-class _ProfileScreenState extends State<ProfileScreen> {
-  int _bookingsCount = 0;
-  bool _isLoadingBookings = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchBookings();
-    FavoritesService.instance.addListener(_onFavoritesChanged);
-    AuthSession.instance.addListener(_onAuthChanged);
-  }
-
-  @override
-  void dispose() {
-    FavoritesService.instance.removeListener(_onFavoritesChanged);
-    AuthSession.instance.removeListener(_onAuthChanged);
-    super.dispose();
-  }
-
-  void _onFavoritesChanged() {
-    if (mounted) setState(() {});
-  }
-
-  void _onAuthChanged() {
-    if (mounted) setState(() {});
-  }
-
-  Future<void> _fetchBookings() async {
-    setState(() => _isLoadingBookings = true);
-    try {
-      final user = Supabase.instance.client.auth.currentUser;
-      if (user != null) {
-        final apptData = await Supabase.instance.client
-            .from('appointments')
-            .select('appointment_id')
-            .eq('customer_id', user.id);
-
-        if (mounted) {
-          setState(() {
-            _bookingsCount = (apptData as List).length;
-            _isLoadingBookings = false;
-          });
-        }
-      } else {
-        if (mounted) setState(() => _isLoadingBookings = false);
-      }
-    } catch (e) {
-      if (mounted) setState(() => _isLoadingBookings = false);
+    Map<String, dynamic>? profile;
+    if (authState is AuthAuthenticated) {
+      profile = authState.profile;
     }
-  }
 
-  @override
-  Widget build(BuildContext context) {
-    final auth = AuthSession.instance;
-    final user = Supabase.instance.client.auth.currentUser;
+    final String firstName = (profile?['first_name'] as String?) ?? 'User';
+    final String lastName = (profile?['last_name'] as String?) ?? '';
+    final String email = ref.read(authRepositoryProvider).currentSession?.user.email ?? '';
 
-    final String firstName = (auth.userProfile?['first_name'] as String?) ??
-        (user?.userMetadata?['first_name'] as String?) ??
-        'User';
-    final String lastName = (auth.userProfile?['last_name'] as String?) ??
-        (user?.userMetadata?['last_name'] as String?) ??
-        '';
-    final String email = user?.email ?? '';
-    final bool isLoadingProfile = auth.isInitializing;
+    final bookingsAsync = ref.watch(customerAppointmentsProvider);
+    final bookingsCount = bookingsAsync.valueOrNull?.length ?? 0;
+    final isLoadingBookings = bookingsAsync.isLoading;
+
+    final favoritesAsync = ref.watch(favoriteProvidersProvider);
+    final favoritesCount = favoritesAsync.valueOrNull?.length ?? 0;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -160,7 +113,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    isLoadingProfile ? 'Loading...' : '$firstName $lastName'.trim(),
+                    isInitializing ? 'Loading...' : '$firstName $lastName'.trim(),
                     style: GoogleFonts.fraunces(
                       fontSize: 26,
                       fontWeight: FontWeight.w500,
@@ -169,7 +122,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    email.isEmpty && isLoadingProfile ? 'Loading...' : email,
+                    email.isEmpty && isInitializing ? 'Loading...' : email,
                     style: GoogleFonts.dmSans(
                       fontSize: 14,
                       color: AppColors.muted,
@@ -180,7 +133,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       _StatCell(
-                        value: _isLoadingBookings ? '-' : _bookingsCount.toString(),
+                        value: isLoadingBookings ? '-' : bookingsCount.toString(),
                         label: 'Bookings',
                       ),
                       Container(
@@ -190,8 +143,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         margin: const EdgeInsets.symmetric(horizontal: 24),
                       ),
                       _StatCell(
-                        value: FavoritesService.instance.favoriteIds.length
-                            .toString(),
+                        value: favoritesCount.toString(),
                         label: 'Favorites',
                       ),
                     ],
@@ -207,12 +159,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 _TapRow(
                   icon: Icons.person_outline,
                   label: 'Personal Information',
-                  onTap: () => _editProfileInfo(context),
+                  onTap: () => _editProfileInfo(context, ref),
                 ),
                 _TapRow(
                   icon: Icons.lock_outline,
                   label: 'Change Password',
-                  onTap: () => _changePassword(context),
+                  onTap: () => _changePassword(context, ref),
                 ),
                 const _TapRow(
                   icon: Icons.payment_outlined,
@@ -259,7 +211,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   icon: Icons.logout,
                   label: 'Sign Out',
                   isDestructive: true,
-                  onTap: () => _showSignOutConfirm(context),
+                  onTap: () => _showSignOutConfirm(context, ref),
                 ),
               ],
             ),
@@ -269,15 +221,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _editProfileInfo(BuildContext context) {
-    final auth = AuthSession.instance;
-    final user = Supabase.instance.client.auth.currentUser;
-    final String firstName = (auth.userProfile?['first_name'] as String?) ??
-        (user?.userMetadata?['first_name'] as String?) ??
-        'User';
-    final String lastName = (auth.userProfile?['last_name'] as String?) ??
-        (user?.userMetadata?['last_name'] as String?) ??
-        '';
+  void _editProfileInfo(BuildContext context, WidgetRef ref) {
+    final authState = ref.read(authProvider);
+    Map<String, dynamic>? profile;
+    if (authState is AuthAuthenticated) profile = authState.profile;
+
+    final String firstName = (profile?['first_name'] as String?) ?? 'User';
+    final String lastName = (profile?['last_name'] as String?) ?? '';
 
     showModalBottomSheet(
       context: context,
@@ -287,13 +237,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         initialFirstName: firstName,
         initialLastName: lastName,
         onSaved: () {
-          AuthSession.instance.refreshProfile();
+          ref.read(authProvider.notifier).init();
         },
       ),
     );
   }
 
-  void _changePassword(BuildContext context) {
+  void _changePassword(BuildContext context, WidgetRef ref) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -302,7 +252,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _showSignOutConfirm(BuildContext context) {
+  void _showSignOutConfirm(BuildContext context, WidgetRef ref) {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -333,7 +283,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           ElevatedButton(
             onPressed: () async {
-              await AuthSession.instance.logout();
+              await ref.read(authRepositoryProvider).signOut();
+              if (context.mounted) {
+                 context.go('/login');
+              }
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.red,
@@ -592,7 +545,7 @@ class _SheetField extends StatelessWidget {
   }
 }
 
-class _EditProfileSheet extends StatefulWidget {
+class _EditProfileSheet extends ConsumerStatefulWidget {
   final String initialFirstName;
   final String initialLastName;
   final VoidCallback onSaved;
@@ -604,10 +557,10 @@ class _EditProfileSheet extends StatefulWidget {
   });
 
   @override
-  State<_EditProfileSheet> createState() => _EditProfileSheetState();
+  ConsumerState<_EditProfileSheet> createState() => _EditProfileSheetState();
 }
 
-class _EditProfileSheetState extends State<_EditProfileSheet> {
+class _EditProfileSheetState extends ConsumerState<_EditProfileSheet> {
   late final TextEditingController _firstController;
   late final TextEditingController _lastController;
   bool _isLoading = false;
@@ -629,33 +582,17 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
   Future<void> _save() async {
     setState(() => _isLoading = true);
     try {
-      final user = Supabase.instance.client.auth.currentUser;
-      if (user != null) {
-        await Supabase.instance.client
-            .from('users')
-            .update({
-              'first_name': _firstController.text.trim(),
-              'last_name': _lastController.text.trim(),
-              'updated_at': DateTime.now().toUtc().toIso8601String(),
-            })
-            .eq('user_id', user.id);
+      await ref.read(authRepositoryProvider).updateUserProfile(
+        firstName: _firstController.text.trim(),
+        lastName: _lastController.text.trim(),
+      );
 
-        await Supabase.instance.client.auth.updateUser(
-          UserAttributes(
-            data: {
-              'first_name': _firstController.text.trim(),
-              'last_name': _lastController.text.trim(),
-            },
-          ),
+      if (mounted) {
+        widget.onSaved();
+        context.pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Profile updated successfully.')),
         );
-
-        if (mounted) {
-          widget.onSaved();
-          context.pop();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Profile updated successfully.')),
-          );
-        }
       }
     } catch (e) {
       if (mounted) {
@@ -718,14 +655,14 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
   }
 }
 
-class _ChangePasswordSheet extends StatefulWidget {
+class _ChangePasswordSheet extends ConsumerStatefulWidget {
   const _ChangePasswordSheet();
 
   @override
-  State<_ChangePasswordSheet> createState() => _ChangePasswordSheetState();
+  ConsumerState<_ChangePasswordSheet> createState() => _ChangePasswordSheetState();
 }
 
-class _ChangePasswordSheetState extends State<_ChangePasswordSheet> {
+class _ChangePasswordSheetState extends ConsumerState<_ChangePasswordSheet> {
   final _newPasswordController = TextEditingController();
   bool _isLoading = false;
 
@@ -748,9 +685,7 @@ class _ChangePasswordSheetState extends State<_ChangePasswordSheet> {
 
     setState(() => _isLoading = true);
     try {
-      await Supabase.instance.client.auth.updateUser(
-        UserAttributes(password: pwd),
-      );
+      await ref.read(authRepositoryProvider).updatePassword(pwd);
 
       if (mounted) {
         context.pop();
@@ -758,19 +693,12 @@ class _ChangePasswordSheetState extends State<_ChangePasswordSheet> {
           const SnackBar(content: Text('Password updated successfully.')),
         );
       }
-    } on AuthException catch (e) {
+    } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('An unexpected error occurred: $e')),
-        );
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
     }
   }

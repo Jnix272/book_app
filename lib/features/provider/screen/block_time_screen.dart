@@ -1,18 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app_theme.dart';
-import '../../../core/services/provider_session.dart';
+import '../../../providers/provider_dashboard_providers.dart';
+import '../../../providers/repository_providers.dart';
 
-class BlockTimeScreen extends StatefulWidget {
+class BlockTimeScreen extends ConsumerStatefulWidget {
   const BlockTimeScreen({super.key});
 
   @override
-  State<BlockTimeScreen> createState() => _BlockTimeScreenState();
+  ConsumerState<BlockTimeScreen> createState() => _BlockTimeScreenState();
 }
 
-class _BlockTimeScreenState extends State<BlockTimeScreen> {
+class _BlockTimeScreenState extends ConsumerState<BlockTimeScreen> {
   DateTime _startDate = DateTime.now();
   DateTime _endDate = DateTime.now();
   TimeOfDay _startTime = const TimeOfDay(hour: 9, minute: 0);
@@ -21,14 +22,6 @@ class _BlockTimeScreenState extends State<BlockTimeScreen> {
   final _noteController = TextEditingController();
 
   bool _isSaving = false;
-  bool _isLoading = true; // for existing blocks list
-  List<Map<String, dynamic>> _existingBlocks = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _loadExistingBlocks();
-  }
 
   @override
   void dispose() {
@@ -36,42 +29,12 @@ class _BlockTimeScreenState extends State<BlockTimeScreen> {
     super.dispose();
   }
 
-  // ── Fetch existing blocks ─────────────────────────────────
-
-  Future<void> _loadExistingBlocks() async {
-    final providerId = await ProviderSession.instance.providerId;
-    if (providerId == null) {
-      if (mounted) setState(() => _isLoading = false);
-      return;
-    }
-
-    try {
-      final now = DateTime.now().toUtc().toIso8601String();
-      final rows = await Supabase.instance.client
-          .from('provider_time_off')
-          .select()
-          .eq('provider_id', providerId)
-          .gte('end_datetime', now) // only future/active blocks
-          .order('start_datetime');
-
-      if (mounted) {
-        setState(() {
-          _existingBlocks = List<Map<String, dynamic>>.from(rows as List);
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('Error loading existing blocks: $e');
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
+  // Removed _loadExistingBlocks since we'll use providerTimeOffsProvider inside build
 
   Future<void> _deleteBlock(String timeOffId) async {
     try {
-      await Supabase.instance.client
-          .from('provider_time_off')
-          .delete()
-          .eq('time_off_id', timeOffId);
+      final success = await ref.read(scheduleRepositoryProvider).deleteBlockedTime(timeOffId);
+      if (!success) throw Exception('Deletion failed');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -84,7 +47,7 @@ class _BlockTimeScreenState extends State<BlockTimeScreen> {
             ),
           ),
         );
-        _loadExistingBlocks();
+        ref.invalidate(providerTimeOffsProvider);
       }
     } catch (e) {
       debugPrint('Error deleting block: $e');
@@ -106,9 +69,7 @@ class _BlockTimeScreenState extends State<BlockTimeScreen> {
   // ── Save new block ────────────────────────────────────────
 
   Future<void> _saveBlock() async {
-    // BUG FIX: provider_time_off.provider_id references providers.provider_id,
-    // NOT auth uid. Use ProviderSession.
-    final providerId = await ProviderSession.instance.providerId;
+    final providerId = ref.read(currentProviderIdProvider);
     if (providerId == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -162,12 +123,8 @@ class _BlockTimeScreenState extends State<BlockTimeScreen> {
       final note = _noteController.text.trim();
       final reason = note.isNotEmpty ? '$_reason — $note' : _reason;
 
-      await Supabase.instance.client.from('provider_time_off').insert({
-        'provider_id': providerId,
-        'start_datetime': startDt.toUtc().toIso8601String(),
-        'end_datetime': endDt.toUtc().toIso8601String(),
-        'reason': reason,
-      });
+      final success = await ref.read(scheduleRepositoryProvider).addBlockedTime(providerId, startDt, endDt, reason);
+      if (!success) throw Exception('Creation failed');
 
       if (mounted) {
         _noteController.clear();
@@ -181,7 +138,7 @@ class _BlockTimeScreenState extends State<BlockTimeScreen> {
             ),
           ),
         );
-        _loadExistingBlocks(); // refresh list
+        ref.invalidate(providerTimeOffsProvider);
       }
     } catch (e) {
       debugPrint('Error saving block time: $e');
@@ -401,35 +358,51 @@ class _BlockTimeScreenState extends State<BlockTimeScreen> {
             // ── Existing blocks ──────────────────────
             const SectionLabel('UPCOMING BLOCKS'),
             const SizedBox(height: 8),
-            if (_isLoading)
-              const Center(
-                child: CircularProgressIndicator(color: AppColors.amber),
-              )
-            else if (_existingBlocks.isEmpty)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: AppColors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.line),
-                ),
-                child: Text(
-                  'No upcoming blocks',
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.dmSans(
-                    fontSize: 14,
-                    color: AppColors.muted,
+            Consumer(
+              builder: (context, ref, child) {
+                final blocksAsync = ref.watch(providerTimeOffsProvider);
+                
+                return blocksAsync.when(
+                  loading: () => const Center(
+                    child: CircularProgressIndicator(color: AppColors.amber),
                   ),
-                ),
-              )
-            else
-              ...(_existingBlocks.map(
-                (block) => _ExistingBlockTile(
-                  block: block,
-                  onDelete: () => _deleteBlock(block['time_off_id'] as String),
-                ),
-              )),
+                  error: (err, stack) => Center(
+                    child: Text('Error loading blocks', style: GoogleFonts.dmSans()),
+                  ),
+                  data: (blocks) {
+                    if (blocks.isEmpty) {
+                      return Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: AppColors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppColors.line),
+                        ),
+                        child: Text(
+                          'No upcoming blocks',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.dmSans(
+                            fontSize: 14,
+                            color: AppColors.muted,
+                          ),
+                        ),
+                      );
+                    }
+                    return Column(
+                      children: blocks
+                          .map(
+                            (block) => _ExistingBlockTile(
+                              block: block,
+                              onDelete: () => _deleteBlock(block['time_off_id'] as String),
+                            ),
+                          )
+                          .toList(),
+                    );
+                  },
+                );
+              },
+            ),
             const SizedBox(height: 32),
           ],
         ),

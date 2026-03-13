@@ -1,88 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app_theme.dart';
-import '../../../models/models.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../domain/models/models.dart';
 import '../../../core/services/provider_session.dart';
+import '../../../providers/provider_dashboard_providers.dart';
 import 'provider_appt_detail_screen.dart';
 import 'provider_shell.dart';
 import 'block_time_screen.dart';
 import 'working_hours_screen.dart';
 import 'add_edit_service_screen.dart';
 
-class ProviderDashboardScreen extends StatefulWidget {
+class ProviderDashboardScreen extends ConsumerStatefulWidget {
   const ProviderDashboardScreen({super.key});
 
   @override
-  State<ProviderDashboardScreen> createState() =>
+  ConsumerState<ProviderDashboardScreen> createState() =>
       _ProviderDashboardScreenState();
 }
 
-class _ProviderDashboardScreenState extends State<ProviderDashboardScreen> {
-  List<ProviderAppointment> _allAppts = [];
-  bool _isLoading = true;
+class _ProviderDashboardScreenState extends ConsumerState<ProviderDashboardScreen> {
 
-  @override
-  void initState() {
-    super.initState();
-    _fetchAppointments();
-  }
 
-  Future<void> _fetchAppointments() async {
-    if (mounted) setState(() => _isLoading = true);
-
-    // BUG FIX: appointments.provider_id references providers.provider_id,
-    // NOT auth uid. Use ProviderSession.
-    final providerId = await ProviderSession.instance.providerId;
-    if (providerId == null) {
-      if (mounted) setState(() => _isLoading = false);
-      return;
-    }
-
-    try {
-      final response = await Supabase.instance.client
-          .from('appointments')
-          .select(
-            '*, services(service_name, price, duration_minutes), '
-            'users!inner(first_name, last_name)',
-          )
-          .eq('provider_id', providerId);
-
-      final appts = (response as List)
-          .map((json) => ProviderAppointment.fromJson(json))
-          .toList();
-
-      if (mounted) {
-        setState(() {
-          _allAppts = appts;
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('Error fetching dashboard appointments: $e');
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  List<ProviderAppointment> get _todayAppts =>
-      _allAppts
-          .where((a) => DateUtils.isSameDay(a.startsAt, DateTime.now()))
-          .toList()
-        ..sort((a, b) => a.startsAt.compareTo(b.startsAt));
-
-  // BUG FIX: was using sampleProviderAppointments (always empty) instead of _allAppts
-  int get _weekApptCount => _allAppts.where((a) {
-    final weekAgo = DateTime.now().subtract(const Duration(days: 7));
-    return a.status != 'Cancelled' && a.startsAt.isAfter(weekAgo);
-  }).length;
-
-  double get _weekRevenue => _allAppts
-      .where((a) {
-        final weekAgo = DateTime.now().subtract(const Duration(days: 7));
-        return a.status != 'Cancelled' && a.startsAt.isAfter(weekAgo);
-      })
-      .fold(0.0, (sum, a) => sum + a.price);
 
   // Use ProviderSession for business name — no more hardcoded "Aria Studio"
   String get _businessName =>
@@ -93,6 +33,20 @@ class _ProviderDashboardScreenState extends State<ProviderDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
+    final apptsAsync = ref.watch(providerAppointmentsProvider);
+    final isPageLoading = apptsAsync.isLoading;
+    final allAppts = apptsAsync.valueOrNull ?? [];
+
+    final todayAppts = allAppts
+        .where((a) => DateUtils.isSameDay(a.startsAt, now))
+        .toList()
+      ..sort((a, b) => a.startsAt.compareTo(b.startsAt));
+
+    final weekAgo = now.subtract(const Duration(days: 7));
+    final weekAppts = allAppts.where((a) => a.status != 'Cancelled' && a.startsAt.isAfter(weekAgo));
+    final weekApptCount = weekAppts.length;
+    final weekRevenue = weekAppts.fold(0.0, (sum, a) => sum + a.price);
+
     return CustomScrollView(
       slivers: [
         // ── App bar ─────────────────────────────────
@@ -152,7 +106,7 @@ class _ProviderDashboardScreenState extends State<ProviderDashboardScreen> {
                 const SizedBox(height: 4),
                 Text(
                   '${DateFormat('EEEE, MMMM d').format(now)} · '
-                  '${_todayAppts.length} appointment${_todayAppts.length == 1 ? '' : 's'} today',
+                  '${todayAppts.length} appointment${todayAppts.length == 1 ? '' : 's'} today',
                   style: GoogleFonts.dmSans(
                     fontSize: 14,
                     color: AppColors.muted,
@@ -164,19 +118,19 @@ class _ProviderDashboardScreenState extends State<ProviderDashboardScreen> {
                 Row(
                   children: [
                     _StatCard(
-                      value: '${_todayAppts.length}',
+                      value: '${todayAppts.length}',
                       label: 'Today',
                       color: AppColors.sage,
                     ),
                     const SizedBox(width: 10),
                     _StatCard(
-                      value: '$_weekApptCount',
+                      value: '$weekApptCount',
                       label: 'This week',
                       color: AppColors.amber,
                     ),
                     const SizedBox(width: 10),
                     _StatCard(
-                      value: '\$${_weekRevenue.toStringAsFixed(0)}',
+                      value: '\$${weekRevenue.toStringAsFixed(0)}',
                       label: 'Revenue',
                       color: AppColors.ink,
                     ),
@@ -200,7 +154,7 @@ class _ProviderDashboardScreenState extends State<ProviderDashboardScreen> {
                             builder: (_) => const BlockTimeScreen(),
                           ),
                         );
-                        _fetchAppointments();
+                        ref.invalidate(providerAppointmentsProvider);
                       },
                     ),
                     const SizedBox(width: 10),
@@ -240,13 +194,13 @@ class _ProviderDashboardScreenState extends State<ProviderDashboardScreen> {
           ),
         ),
 
-        if (_isLoading)
+        if (isPageLoading)
           const SliverFillRemaining(
             child: Center(
               child: CircularProgressIndicator(color: AppColors.sage),
             ),
           )
-        else if (_todayAppts.isEmpty)
+        else if (todayAppts.isEmpty)
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(20),
@@ -257,21 +211,23 @@ class _ProviderDashboardScreenState extends State<ProviderDashboardScreen> {
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
             sliver: SliverList.separated(
-              itemCount: _todayAppts.length,
+              itemCount: todayAppts.length,
               separatorBuilder: (_, index) => const SizedBox(height: 10),
               itemBuilder: (context, i) => _AppointmentCard(
-                appt: _todayAppts[i],
+                appt: todayAppts[i],
                 onTap: () async {
                   await Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (_) => ProviderApptDetailScreen(
-                        appt: _todayAppts[i],
-                        onStatusChanged: _fetchAppointments,
+                        appt: todayAppts[i],
+                        onStatusChanged: () {
+                          ref.invalidate(providerAppointmentsProvider);
+                        },
                       ),
                     ),
                   );
-                  _fetchAppointments();
+                  ref.invalidate(providerAppointmentsProvider);
                 },
               ),
             ),

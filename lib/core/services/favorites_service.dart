@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../models/models.dart';
+import '../../domain/models/models.dart';
 
 class FavoritesService extends ChangeNotifier {
   static final FavoritesService instance = FavoritesService._internal();

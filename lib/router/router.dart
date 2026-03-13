@@ -16,12 +16,13 @@ import '../auth/splash_screen.dart';
 import '../auth/email_verification_screen.dart';
 import '../features/booking/screen/provider_detail_screen.dart';
 import '../features/booking/screen/booking_slot_screen.dart';
+import '../features/booking/screen/booking_confirm_screen.dart';
 import '../features/booking/screen/booking_confirmed_screen.dart';
 import '../features/appointments/screen/appointments_screen.dart';
 import '../features/profile/screen/profile_screen.dart';
 import '../features/provider/screen/provider_shell.dart';
 import '../features/search/screen/search_screen.dart';
-import '../models/models.dart';
+import '../domain/models/models.dart';
 
 // ─── Navigator key ─────────────────────────────────────────────────────────────
 final GlobalKey<NavigatorState> routerKey = GlobalKey<NavigatorState>();
@@ -191,7 +192,7 @@ final GoRouter router = GoRouter(
         final extras = state.extra as Map<String, dynamic>;
         return BookingSlotScreen(
           provider: extras['provider'] as ServiceProvider,
-          service: extras['service'] as ServiceType,
+          service: extras['service'] as ServiceItem,
         );
       },
     ),
@@ -201,7 +202,7 @@ final GoRouter router = GoRouter(
         final extras = state.extra as Map<String, dynamic>;
         return BookingConfirmScreen(
           provider: extras['provider'] as ServiceProvider,
-          service: extras['service'] as ServiceType,
+          service: extras['service'] as ServiceItem,
           date: extras['date'] as DateTime,
           slot: extras['slot'] as String,
         );
@@ -213,9 +214,8 @@ final GoRouter router = GoRouter(
         final extras = state.extra as Map<String, dynamic>;
         return BookingConfirmedScreen(
           provider: extras['provider'] as ServiceProvider,
-          service: extras['service'] as ServiceType,
-          date: extras['date'] as DateTime,
-          slot: extras['slot'] as String,
+          service: extras['service'] as ServiceItem,
+          slotDateTime: extras['slotDateTime'] as DateTime,
           appointmentId: extras['appointmentId'] as String,
         );
       },

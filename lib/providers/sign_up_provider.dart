@@ -2,6 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/validators/validators.dart';
+import '../data/repositories/auth_repository.dart';
+import 'repository_providers.dart';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -69,10 +71,9 @@ final class SignUpFailure extends SignUpState {
 /// **Step 4** – Persistence (server-side)
 /// **Step 5** – Post-signup: emits [SignUpSuccess] with email
 class SignUpNotifier extends StateNotifier<SignUpState> {
-  SignUpNotifier() : super(const SignUpInitial());
+  final AuthRepository _authRepo;
 
-  // ── Supabase client shorthand ─────────────────────────────────────────────
-  SupabaseClient get _db => Supabase.instance.client;
+  SignUpNotifier(this._authRepo) : super(const SignUpInitial());
 
   // ── Customer ──────────────────────────────────────────────────────────────
 
@@ -99,7 +100,7 @@ class SignUpNotifier extends StateNotifier<SignUpState> {
 
     // ── Step 2: Email availability check ───────────────────────────────────
     state = const SignUpCheckingAvailability();
-    final taken = await _isEmailTaken(email.trim());
+    final taken = await _authRepo.isEmailTaken(email.trim());
     if (taken) {
       state = const SignUpEmailTaken();
       return;
@@ -108,14 +109,12 @@ class SignUpNotifier extends StateNotifier<SignUpState> {
     // ── Steps 3 & 4: Hashing (server) + Persistence ────────────────────────
     state = const SignUpLoading();
     try {
-      final res = await _db.auth.signUp(
-        email: email.trim(),
+      final res = await _authRepo.signUpCustomer(
+        email: email,
         password: password,
-        data: {
-          'first_name': firstName.trim(),
-          'last_name': lastName.trim(),
-          if (phone != null && phone.isNotEmpty) 'phone': phone.trim(),
-        },
+        firstName: firstName,
+        lastName: lastName,
+        phone: phone,
       );
 
       if (res.user == null) {
@@ -173,7 +172,7 @@ class SignUpNotifier extends StateNotifier<SignUpState> {
 
     // ── Step 2: Email availability check ───────────────────────────────────
     state = const SignUpCheckingAvailability();
-    final taken = await _isEmailTaken(email.trim());
+    final taken = await _authRepo.isEmailTaken(email.trim());
     if (taken) {
       state = const SignUpEmailTaken();
       return;
@@ -182,31 +181,22 @@ class SignUpNotifier extends StateNotifier<SignUpState> {
     // ── Steps 3 & 4: Hashing (server) + Persistence ────────────────────────
     state = const SignUpLoading();
     try {
-      final res = await _db.auth.signUp(
-        email: email.trim(),
+      await _authRepo.signUpProvider(
+        email: email,
         password: password,
-        data: {'first_name': firstName.trim(), 'last_name': lastName.trim()},
+        firstName: firstName,
+        lastName: lastName,
+        businessName: businessName,
+        category: category,
+        emoji: emoji,
+        phone: phone,
+        address: address,
+        city: city,
+        state: state_,
+        bio: bio,
       );
 
-      final user = res.user;
-      if (user == null) {
-        state = const SignUpFailure('Failed to create account.');
-        return;
-      }
 
-      // Insert provider profile.
-      // The `handle_new_provider` trigger elevates the user's role → 'provider'.
-      await _db.from('providers').insert({
-        'user_id': user.id,
-        'business_name': businessName.trim(),
-        'category': category,
-        'emoji': emoji,
-        if (phone != null && phone.isNotEmpty) 'phone': phone.trim(),
-        if (address != null && address.isNotEmpty) 'address': address.trim(),
-        if (city != null && city.isNotEmpty) 'city': city.trim(),
-        if (state_ != null && state_.isNotEmpty) 'state': state_.trim(),
-        if (bio != null && bio.isNotEmpty) 'bio': bio.trim(),
-      });
 
       // ── Step 5: Post-signup ───────────────────────────────────────────────
       state = SignUpSuccess(email.trim());
@@ -259,18 +249,7 @@ class SignUpNotifier extends StateNotifier<SignUpState> {
     return null; // ✓ all checks pass
   }
 
-  Future<bool> _isEmailTaken(String email) async {
-    try {
-      final row = await _db
-          .from('users')
-          .select('user_id')
-          .eq('email', email)
-          .maybeSingle();
-      return row != null;
-    } catch (_) {
-      return false;
-    }
-  }
+
 
   String? _validateBusinessName(String name) {
     final v = name.trim();
@@ -296,5 +275,6 @@ class SignUpNotifier extends StateNotifier<SignUpState> {
 /// autoDispose so the state resets every time the signup screen is popped.
 final signUpProvider =
     StateNotifierProvider.autoDispose<SignUpNotifier, SignUpState>((ref) {
-      return SignUpNotifier();
+      final authRepo = ref.watch(authRepositoryProvider);
+      return SignUpNotifier(authRepo);
     });

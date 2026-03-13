@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../models/models.dart';
+import '../../domain/models/models.dart';
+import '../../data/dto/appointment_dto.dart';
+import '../../data/dto/service_item_dto.dart';
 
 class SupabaseClientService {
   static final SupabaseClientService instance =
@@ -40,7 +42,7 @@ class SupabaseClientService {
           .order('appointment_datetime', ascending: true);
 
       return (res as List)
-          .map((json) => ProviderAppointment.fromJson(json))
+          .map((json) => ProviderAppointmentDto.fromJson(json))
           .toList();
     } catch (e) {
       debugPrint('Error fetching provider appointments: $e');
@@ -90,7 +92,7 @@ class SupabaseClientService {
           .eq('provider_id', providerId)
           .order('created_at', ascending: false);
 
-      return (res as List).map((json) => ServiceItem.fromJson(json)).toList();
+      return (res as List).map((json) => ServiceItemDto.fromJson(json)).toList();
     } catch (e) {
       debugPrint('Error fetching provider services: $e');
       return [];

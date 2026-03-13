@@ -1,91 +1,41 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../app_theme.dart';
-import '../../../models/models.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../../core/services/provider_session.dart';
+import '../../../domain/models/models.dart';
+import '../../../providers/provider_dashboard_providers.dart';
 import 'provider_appt_detail_screen.dart';
 import 'provider_shell.dart';
 import 'block_time_screen.dart';
 import 'working_hours_screen.dart';
 
-class ProviderScheduleScreen extends StatefulWidget {
+class ProviderScheduleScreen extends ConsumerStatefulWidget {
   const ProviderScheduleScreen({super.key});
 
   @override
-  State<ProviderScheduleScreen> createState() => _ProviderScheduleScreenState();
+  ConsumerState<ProviderScheduleScreen> createState() => _ProviderScheduleScreenState();
 }
 
-class _ProviderScheduleScreenState extends State<ProviderScheduleScreen> {
+class _ProviderScheduleScreenState extends ConsumerState<ProviderScheduleScreen> {
   DateTime _weekStart = _mondayOf(DateTime.now());
-  List<ProviderAppointment> _weekAppts = [];
-  bool _isLoading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchWeekAppointments();
-  }
 
   static DateTime _mondayOf(DateTime d) =>
       d.subtract(Duration(days: d.weekday - 1));
 
-  Future<void> _fetchWeekAppointments() async {
-    if (mounted) setState(() => _isLoading = true);
-
-    // BUG FIX: appointments.provider_id references providers.provider_id,
-    // NOT auth uid. Use ProviderSession.
-    final providerId = await ProviderSession.instance.providerId;
-    if (providerId == null) {
-      if (mounted) setState(() => _isLoading = false);
-      return;
-    }
-
-    final endOfWeek = _weekStart.add(const Duration(days: 7));
-
-    try {
-      final response = await Supabase.instance.client
-          .from('appointments')
-          .select(
-            '*, services(service_name, price, duration_minutes), '
-            'users!inner(first_name, last_name)',
-          )
-          .eq('provider_id', providerId)
-          .gte('appointment_datetime', _weekStart.toUtc().toIso8601String())
-          .lt('appointment_datetime', endOfWeek.toUtc().toIso8601String());
-
-      final appts = (response as List)
-          .map((json) => ProviderAppointment.fromJson(json))
-          .toList();
-
-      if (mounted) {
-        setState(() {
-          _weekAppts = appts;
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('Error fetching schedule appointments: $e');
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
   void _prevWeek() {
     setState(() => _weekStart = _weekStart.subtract(const Duration(days: 7)));
-    _fetchWeekAppointments();
   }
 
   void _nextWeek() {
     setState(() => _weekStart = _weekStart.add(const Duration(days: 7)));
-    _fetchWeekAppointments();
   }
 
   List<DateTime> get _days =>
       List.generate(7, (i) => _weekStart.add(Duration(days: i)));
 
-  List<ProviderAppointment> _apptsForDay(DateTime day) =>
-      _weekAppts.where((a) => DateUtils.isSameDay(a.startsAt, day)).toList()
+  List<ProviderAppointment> _apptsForDay(DateTime day, List<ProviderAppointment> weekAppts) =>
+      weekAppts.where((a) => DateUtils.isSameDay(a.startsAt, day)).toList()
         ..sort((a, b) => a.startsAt.compareTo(b.startsAt));
 
   String _weekLabel() {
@@ -113,7 +63,7 @@ class _ProviderScheduleScreenState extends State<ProviderScheduleScreen> {
                 context,
                 MaterialPageRoute(builder: (_) => const BlockTimeScreen()),
               );
-              _fetchWeekAppointments();
+              ref.invalidate(providerAppointmentsProvider);
             },
             icon: const Icon(Icons.block, size: 16, color: AppColors.amber),
             label: Text(
@@ -206,59 +156,78 @@ class _ProviderScheduleScreenState extends State<ProviderScheduleScreen> {
 
           // ── Appointment grid ──────────────────────
           Expanded(
-            child: _isLoading
-                ? const Center(
+            child: Consumer(
+              builder: (context, ref, child) {
+                final apptsAsync = ref.watch(providerAppointmentsProvider);
+
+                return apptsAsync.when(
+                  loading: () => const Center(
                     child: CircularProgressIndicator(color: AppColors.sage),
-                  )
-                : SingleChildScrollView(
-                    padding: const EdgeInsets.all(8),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: _days.map((day) {
-                        final appts = _apptsForDay(day);
-                        return Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 2),
-                            child: Column(
-                              children: appts.isEmpty
-                                  ? [
-                                      Container(
-                                        height: 40,
-                                        alignment: Alignment.center,
-                                        child: const Icon(
-                                          Icons.remove,
-                                          size: 14,
-                                          color: AppColors.line,
+                  ),
+                  error: (err, stack) => const Center(
+                    child: Text('Error loading schedule'),
+                  ),
+                  data: (allAppts) {
+                    final endOfWeek = _weekStart.add(const Duration(days: 7));
+                    final currentWeekAppts = allAppts.where((a) {
+                      return (a.startsAt.isAfter(_weekStart) ||
+                              a.startsAt.isAtSameMomentAs(_weekStart)) &&
+                          a.startsAt.isBefore(endOfWeek);
+                    }).toList();
+
+                    return SingleChildScrollView(
+                      padding: const EdgeInsets.all(8),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: _days.map((day) {
+                          final appts = _apptsForDay(day, currentWeekAppts);
+                          return Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 2),
+                              child: Column(
+                                children: appts.isEmpty
+                                    ? [
+                                        Container(
+                                          height: 40,
+                                          alignment: Alignment.center,
+                                          child: const Icon(
+                                            Icons.remove,
+                                            size: 14,
+                                            color: AppColors.line,
+                                          ),
                                         ),
-                                      ),
-                                    ]
-                                  : appts
+                                      ]
+                                    : appts
                                         .map(
                                           (a) => _ScheduleBlock(
                                             appt: a,
                                             onTap: () async {
                                               await Navigator.push(
                                                 context,
-                                                MaterialPageRoute(
-                                                  builder: (_) =>
-                                                      ProviderApptDetailScreen(
-                                                        appt: a,
-                                                        onStatusChanged:
-                                                            _fetchWeekAppointments,
-                                                      ),
+                                              MaterialPageRoute(
+                                                  builder: (_) => ProviderApptDetailScreen(
+                                                    appt: a,
+                                                    onStatusChanged: () {
+                                                      ref.invalidate(providerAppointmentsProvider);
+                                                    },
+                                                  ),
                                                 ),
                                               );
-                                              _fetchWeekAppointments();
+                                              ref.invalidate(providerAppointmentsProvider);
                                             },
                                           ),
                                         )
                                         .toList(),
+                              ),
                             ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
+                          );
+                        }).toList(),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
           ),
 
           // ── Footer ───────────────────────────────
@@ -274,7 +243,7 @@ class _ProviderScheduleScreenState extends State<ProviderScheduleScreen> {
                   context,
                   MaterialPageRoute(builder: (_) => const WorkingHoursScreen()),
                 );
-                _fetchWeekAppointments();
+                ref.invalidate(providerAppointmentsProvider);
               },
               icon: const Icon(Icons.tune, size: 16),
               label: const Text('Edit Working Hours'),

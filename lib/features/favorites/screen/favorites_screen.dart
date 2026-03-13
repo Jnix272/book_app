@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../app_theme.dart';
-import '../../../models/models.dart';
+import '../../../providers/customer_providers.dart';
 import '../../../core/services/favorites_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
@@ -22,78 +22,36 @@ Color _avatarColor(String category) {
   }
 }
 
-class FavoritesScreen extends StatefulWidget {
+class FavoritesScreen extends ConsumerStatefulWidget {
   const FavoritesScreen({super.key});
 
   @override
-  State<FavoritesScreen> createState() => _FavoritesScreenState();
+  ConsumerState<FavoritesScreen> createState() => _FavoritesScreenState();
 }
 
-class _FavoritesScreenState extends State<FavoritesScreen> {
-  List<ServiceProvider> _favoriteProviders = [];
-  bool _isLoading = true;
+class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
 
   @override
   void initState() {
     super.initState();
-    FavoritesService.instance.addListener(_fetchFavorites);
-    _fetchFavorites();
+    FavoritesService.instance.addListener(_onFavoritesChanged);
   }
 
   @override
   void dispose() {
-    FavoritesService.instance.removeListener(_fetchFavorites);
+    FavoritesService.instance.removeListener(_onFavoritesChanged);
     super.dispose();
   }
 
-  Future<void> _fetchFavorites() async {
-    final favIds = FavoritesService.instance.favoriteIds.toList();
-
-    if (favIds.isEmpty) {
-      if (mounted) {
-        setState(() {
-          _favoriteProviders = [];
-          _isLoading = false;
-        });
-      }
-      return;
-    }
-
-    final missingIds = favIds
-        .where((id) => FavoritesService.instance.getCachedProvider(id) == null)
-        .toList();
-
-    if (missingIds.isNotEmpty) {
-      try {
-        final res = await Supabase.instance.client
-            .from('providers')
-            .select(
-              'provider_id, business_name, average_rating, total_reviews, address, category, emoji, avatar_url, services(service_id, provider_id, service_name, description, price, duration_minutes, buffer_minutes)',
-            )
-            .inFilter('provider_id', missingIds);
-
-        final fetchedProviders = (res as List)
-            .map((p) => ServiceProvider.fromJson(p))
-            .toList();
-        FavoritesService.instance.cacheProviders(fetchedProviders);
-      } catch (e) {
-        debugPrint('Failed to fetch missing favorites: $e');
-      }
-    }
-
-    if (mounted) {
-      setState(() {
-        _favoriteProviders = favIds
-            .map((id) => FavoritesService.instance.getCachedProvider(id))
-            .whereType<ServiceProvider>()
-            .toList();
-        _isLoading = false;
-      });
-    }
+  void _onFavoritesChanged() {
+    // Refresh the provider whenever favorites change
+    ref.invalidate(favoriteProvidersProvider);
   }
 
   @override
   Widget build(BuildContext context) {
+    final favAsync = ref.watch(favoriteProvidersProvider);
+
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
@@ -107,46 +65,51 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
           ),
         ),
       ),
-      body: _isLoading
-          ? const Center(
-              child: CircularProgressIndicator(color: AppColors.sage),
-            )
-          : _favoriteProviders.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.favorite_border,
-                    size: 60,
-                    color: AppColors.muted,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No favorites yet',
-                    style: GoogleFonts.fraunces(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.ink,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Providers you favorite will appear here.',
-                    style: GoogleFonts.dmSans(
-                      fontSize: 15,
+      body: favAsync.when(
+          loading: () => const Center(
+            child: CircularProgressIndicator(color: AppColors.sage),
+          ),
+          error: (err, st) => Center(
+            child: Text('Failed to load favorites', style: GoogleFonts.dmSans(color: AppColors.muted)),
+          ),
+          data: (providers) {
+            if (providers.isEmpty) {
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.favorite_border,
+                      size: 60,
                       color: AppColors.muted,
                     ),
-                  ),
-                ],
-              ),
-            )
-          : ListView.separated(
+                    const SizedBox(height: 16),
+                    Text(
+                      'No favorites yet',
+                      style: GoogleFonts.fraunces(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Providers you favorite will appear here.',
+                      style: GoogleFonts.dmSans(
+                        fontSize: 15,
+                        color: AppColors.muted,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+            return ListView.separated(
               padding: const EdgeInsets.all(20),
-              itemCount: _favoriteProviders.length,
+              itemCount: providers.length,
               separatorBuilder: (context, index) => const SizedBox(height: 16),
               itemBuilder: (context, index) {
-                final p = _favoriteProviders[index];
+                final p = providers[index];
                 return GestureDetector(
                   onTap: () => context.push('/provider', extra: p),
                   child: Card(
@@ -240,7 +203,9 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                   ),
                 );
               },
-            ),
+            );
+          },
+        ),
     );
   }
 }

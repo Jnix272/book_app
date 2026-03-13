@@ -1,8 +1,8 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
 import '../../../app_theme.dart';
-import '../../../models/models.dart';
+import '../../../domain/models/models.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../core/services/favorites_service.dart';
 
@@ -57,7 +57,7 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
       ),
       body: CustomScrollView(
         slivers: [
-          // ── Hero banner ──────────────────────────
+          // -- Hero banner --------------------------
           SliverToBoxAdapter(
             child: Container(
               margin: const EdgeInsets.fromLTRB(20, 12, 20, 24),
@@ -124,7 +124,7 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '${widget.provider.category} · ⭐ ${widget.provider.rating} (${widget.provider.reviewCount} reviews)',
+                    '${widget.provider.category} · ? ${widget.provider.rating} (${widget.provider.reviewCount} reviews)',
                     style: GoogleFonts.dmSans(
                       fontSize: 13,
                       color: AppColors.muted,
@@ -133,7 +133,7 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '📍 ${widget.provider.address}',
+                    '?? ${widget.provider.address}',
                     style: GoogleFonts.dmSans(
                       fontSize: 13,
                       color: AppColors.ink2,
@@ -142,7 +142,7 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '🕐 ${widget.provider.hours}',
+                    '?? ${widget.provider.hours}',
                     style: GoogleFonts.dmSans(
                       fontSize: 13,
                       color: AppColors.muted,
@@ -154,7 +154,7 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
             ),
           ),
 
-          // ── Section label ────────────────────────
+          // -- Section label ------------------------
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
@@ -165,7 +165,7 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
             ),
           ),
 
-          // ── Service cards ────────────────────────
+          // -- Service cards ------------------------
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 120),
             sliver: SliverList.separated(
@@ -187,7 +187,7 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
         ],
       ),
 
-      // ── Sticky bottom CTA ────────────────────────
+      // -- Sticky bottom CTA ------------------------
       bottomNavigationBar: SafeArea(
         child: Container(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
@@ -245,7 +245,7 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
                   child: Text(
                     _selectedService == null
                         ? 'Select a service to continue'
-                        : 'Continue →',
+                        : 'Continue ?',
                     style: GoogleFonts.dmSans(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
@@ -279,7 +279,7 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
   }
 }
 
-// ── Service card widget ───────────────────────────────────────
+// -- Service card widget ---------------------------------------
 
 class _ServiceCard extends StatelessWidget {
   final ServiceType service;
@@ -456,3 +456,7 @@ class _MetaChip extends StatelessWidget {
     ),
   );
 }
+
+
+
+

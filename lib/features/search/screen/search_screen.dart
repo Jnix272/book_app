@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app_theme.dart';
-import '../../../models/models.dart';
+import '../../../domain/models/models.dart';
+import '../../../providers/repository_providers.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../core/services/favorites_service.dart';
 
@@ -22,15 +23,15 @@ class _SearchFilters {
   });
 }
 
-class SearchScreen extends StatefulWidget {
+class SearchScreen extends ConsumerStatefulWidget {
   final String initialQuery;
   const SearchScreen({super.key, this.initialQuery = ''});
 
   @override
-  State<SearchScreen> createState() => _SearchScreenState();
+  ConsumerState<SearchScreen> createState() => _SearchScreenState();
 }
 
-class _SearchScreenState extends State<SearchScreen> {
+class _SearchScreenState extends ConsumerState<SearchScreen> {
   late final TextEditingController _searchController;
   late _SearchFilters _filters;
 
@@ -78,54 +79,13 @@ class _SearchScreenState extends State<SearchScreen> {
     if (_lastSearch != now) return; // superseded
 
     try {
-      // Build the filter chain
-      var request = Supabase.instance.client
-          .from('providers')
-          .select(
-            'provider_id, business_name, average_rating, total_reviews, address, category, emoji, services(service_id, provider_id, service_name, description, price, duration_minutes, buffer_minutes)',
-          )
-          .eq('is_approved', true);
-
-      // Filter by minimum rating
-      if (_filters.minRating > 0) {
-        request = request.gte('average_rating', _filters.minRating);
-      }
-
-      // Execute with sort applied at the end
-      final orderColumn = _filters.sortBy == 'reviews'
-          ? 'total_reviews'
-          : 'average_rating';
-      final res = await request.order(orderColumn, ascending: false);
-
-      List<ServiceProvider> providers = (res as List)
-          .map((p) => ServiceProvider.fromJson(p))
-          .toList();
-
-      // Client-side: text search (provider name)
-      if (query.isNotEmpty) {
-        providers = providers.where((p) {
-          return p.name.toLowerCase().contains(query.toLowerCase()) ||
-              p.category.toLowerCase().contains(query.toLowerCase());
-        }).toList();
-      }
-
-      // Client-side: category filter
-      if (_filters.category != 'All') {
-        providers = providers
-            .where((p) => p.category == _filters.category)
-            .toList();
-      }
-
-      // Client-side: max price filter (lowest service price for the provider)
-      if (_filters.maxPrice != double.infinity) {
-        providers = providers.where((p) {
-          if (p.services.isEmpty) return false;
-          final minPrice = p.services
-              .map((s) => s.price)
-              .reduce((a, b) => a < b ? a : b);
-          return minPrice <= _filters.maxPrice;
-        }).toList();
-      }
+      final providers = await ref.read(providerRepositoryProvider).searchProviders(
+        query: query,
+        category: _filters.category,
+        minRating: _filters.minRating,
+        maxPrice: _filters.maxPrice,
+        sortBy: _filters.sortBy,
+      );
 
       if (mounted) {
         setState(() {

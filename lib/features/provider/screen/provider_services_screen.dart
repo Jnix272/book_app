@@ -1,66 +1,33 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../app_theme.dart';
-import '../../../models/models.dart';
-import '../../../core/services/provider_session.dart';
+import '../../../domain/models/models.dart';
+import '../../../providers/provider_dashboard_providers.dart';
+import '../../../providers/repository_providers.dart';
 import 'add_edit_service_screen.dart';
 
-class ProviderServicesScreen extends StatefulWidget {
+class ProviderServicesScreen extends ConsumerStatefulWidget {
   const ProviderServicesScreen({super.key});
 
   @override
-  State<ProviderServicesScreen> createState() => _ProviderServicesScreenState();
+  ConsumerState<ProviderServicesScreen> createState() => _ProviderServicesScreenState();
 }
 
-class _ProviderServicesScreenState extends State<ProviderServicesScreen> {
-  late Future<List<ServiceItem>> _servicesFuture;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadServices();
-  }
-
-  void _loadServices() {
-    setState(() {
-      _servicesFuture = _fetchServices();
-    });
-  }
-
-  Future<List<ServiceItem>> _fetchServices() async {
-    // BUG FIX: services.provider_id references providers.provider_id,
-    // NOT auth uid. Use ProviderSession to get the correct UUID.
-    final providerId = await ProviderSession.instance.providerId;
-    if (providerId == null) return [];
-
-    final response = await Supabase.instance.client
-        .from('services')
-        .select()
-        .eq('provider_id', providerId)
-        .order('created_at', ascending: false);
-
-    return (response as List)
-        .map((json) => ServiceItem.fromJson(json))
-        .toList();
-  }
+class _ProviderServicesScreenState extends ConsumerState<ProviderServicesScreen> {
 
   Future<void> _deleteService(ServiceItem service) async {
     // Check for upcoming appointments before deleting.
     // Deleting a service that has future bookings orphans those appointments
     // (they show "Unknown Service" to customers).
     try {
-      final upcoming = await Supabase.instance.client
-          .from('appointments')
-          .select('appointment_id')
-          .eq('service_id', service.id)
-          .gte('appointment_datetime', DateTime.now().toUtc().toIso8601String())
-          .neq('status', 'cancelled')
-          .limit(1);
+      final hasUpcoming = await ref
+          .read(appointmentRepositoryProvider)
+          .hasUpcomingAppointmentsForService(service.id);
 
       if (!mounted) return;
 
-      if ((upcoming as List).isNotEmpty) {
+      if (hasUpcoming) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -74,10 +41,7 @@ class _ProviderServicesScreenState extends State<ProviderServicesScreen> {
         return;
       }
 
-      await Supabase.instance.client
-          .from('services')
-          .delete()
-          .eq('service_id', service.id);
+      await ref.read(providerRepositoryProvider).deleteService(service.id);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -86,7 +50,7 @@ class _ProviderServicesScreenState extends State<ProviderServicesScreen> {
             behavior: SnackBarBehavior.floating,
           ),
         );
-        _loadServices();
+        ref.invalidate(providerServicesListProvider);
       }
     } catch (e) {
       if (mounted) {
@@ -117,16 +81,15 @@ class _ProviderServicesScreenState extends State<ProviderServicesScreen> {
         ),
         shape: const Border(bottom: BorderSide(color: AppColors.line)),
       ),
-      body: FutureBuilder<List<ServiceItem>>(
-        future: _servicesFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
+      body: Consumer(
+        builder: (context, ref, child) {
+          final servicesAsync = ref.watch(providerServicesListProvider);
+
+          return servicesAsync.when(
+            loading: () => const Center(
               child: CircularProgressIndicator(color: AppColors.sage),
-            );
-          }
-          if (snapshot.hasError) {
-            return Center(
+            ),
+            error: (err, stack) => Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -142,68 +105,69 @@ class _ProviderServicesScreenState extends State<ProviderServicesScreen> {
                   ),
                   const SizedBox(height: 8),
                   TextButton(
-                    onPressed: _loadServices,
+                    onPressed: () => ref.invalidate(providerServicesListProvider),
                     child: const Text('Retry'),
                   ),
                 ],
               ),
-            );
-          }
-
-          final services = snapshot.data ?? [];
-
-          if (services.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.spa_outlined,
-                    size: 64,
-                    color: AppColors.line,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No services yet',
-                    style: GoogleFonts.fraunces(
-                      fontSize: 20,
-                      color: AppColors.ink,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Tap + to add your first service',
-                    style: GoogleFonts.dmSans(color: AppColors.muted),
-                  ),
-                ],
-              ),
-            );
-          }
-
-          return RefreshIndicator(
-            onRefresh: () async => _loadServices(),
-            color: AppColors.sage,
-            child: ListView.separated(
-              padding: const EdgeInsets.all(20),
-              itemCount: services.length,
-              separatorBuilder: (_, index) => const SizedBox(height: 12),
-              itemBuilder: (context, index) {
-                final service = services[index];
-                return _ServiceCard(
-                  service: service,
-                  onEdit: () async {
-                    final result = await Navigator.push<bool>(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => AddEditServiceScreen(service: service),
-                      ),
-                    );
-                    if (result == true) _loadServices();
-                  },
-                  onDelete: () => _showDeleteConfirm(context, service),
-                );
-              },
             ),
+            data: (services) {
+              if (services.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.spa_outlined,
+                        size: 64,
+                        color: AppColors.line,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'No services yet',
+                        style: GoogleFonts.fraunces(
+                          fontSize: 20,
+                          color: AppColors.ink,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Tap + to add your first service',
+                        style: GoogleFonts.dmSans(color: AppColors.muted),
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              return RefreshIndicator(
+                onRefresh: () async => ref.invalidate(providerServicesListProvider),
+                color: AppColors.sage,
+                child: ListView.separated(
+                  padding: const EdgeInsets.all(20),
+                  itemCount: services.length,
+                  separatorBuilder: (_, index) => const SizedBox(height: 12),
+                  itemBuilder: (context, index) {
+                    final service = services[index];
+                    return _ServiceCard(
+                      service: service,
+                      onEdit: () async {
+                        final result = await Navigator.push<bool>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => AddEditServiceScreen(service: service),
+                          ),
+                        );
+                        if (result == true) {
+                          ref.invalidate(providerServicesListProvider);
+                        }
+                      },
+                      onDelete: () => _showDeleteConfirm(context, service),
+                    );
+                  },
+                ),
+              );
+            },
           );
         },
       ),
@@ -214,7 +178,9 @@ class _ProviderServicesScreenState extends State<ProviderServicesScreen> {
             context,
             MaterialPageRoute(builder: (_) => const AddEditServiceScreen()),
           );
-          if (result == true) _loadServices();
+          if (result == true) {
+            ref.invalidate(providerServicesListProvider);
+          }
         },
         icon: const Icon(Icons.add, color: Colors.white),
         label: Text(

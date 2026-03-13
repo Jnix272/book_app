@@ -1,228 +1,49 @@
-import 'dart:developer' as dev;
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app_theme.dart';
-import '../../../models/models.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import '../../../core/services/favorites_service.dart';
+import '../../../domain/models/models.dart';
+import '../../../providers/auth_provider.dart';
+import '../../../providers/customer_providers.dart';
 
-Color _avatarColor(String category) {
-  switch (category) {
-    case 'Hair':
-      return AppColors.sageLight;
-    case 'Massage':
-      return AppColors.amberLight;
-    case 'Dental':
-      return AppColors.bg;
-    case 'Fitness':
-      return AppColors.redLight;
-    default:
-      return AppColors.line;
-  }
-}
+import '../widgets/provider_card.dart';
 
-class _ProviderCard extends StatefulWidget {
-  final ServiceProvider provider;
-  const _ProviderCard({required this.provider});
-
+// Ambient radial gradient background
+class _AmbientPainter extends CustomPainter {
   @override
-  State<_ProviderCard> createState() => _ProviderCardState();
-}
-
-class _ProviderCardState extends State<_ProviderCard> {
-  // Track previous favorite state to avoid spurious rebuilds.
-  // When the listener fires, only call setState if THIS card's status changed.
-  late bool _isFav;
-
-  @override
-  void initState() {
-    super.initState();
-    _isFav = FavoritesService.instance.isFavorite(widget.provider.id);
-    FavoritesService.instance.addListener(_onFavoritesChanged);
-  }
-
-  @override
-  void dispose() {
-    FavoritesService.instance.removeListener(_onFavoritesChanged);
-    super.dispose();
-  }
-
-  void _onFavoritesChanged() {
-    final updated = FavoritesService.instance.isFavorite(widget.provider.id);
-    // Only rebuild if THIS provider's status actually changed
-    if (updated != _isFav && mounted) {
-      setState(() => _isFav = updated);
+  void paint(Canvas canvas, Size size) {
+    void drawRadial(Offset center, double radius, Color color) {
+      final paint = Paint()
+        ..shader = RadialGradient(
+          colors: [color, Colors.transparent],
+        ).createShader(Rect.fromCircle(center: center, radius: radius));
+      canvas.drawCircle(center, radius, paint);
     }
-  }
 
-  // Pre-compute min price once per build instead of calling reduce every frame.
-  double? get _minPrice {
-    if (widget.provider.services.isEmpty) return null;
-    double min = widget.provider.services.first.price;
-    for (final s in widget.provider.services) {
-      if (s.price < min) min = s.price;
-    }
-    return min;
+    drawRadial(Offset(size.width * 0.2, size.height * 0.1),
+        size.width * 0.7, const Color(0xFF7820C8).withValues(alpha: 0.18));
+    drawRadial(Offset(size.width * 0.8, size.height * 0.9),
+        size.width * 0.6, const Color(0xFFC8501A).withValues(alpha: 0.12));
+    drawRadial(Offset(size.width * 0.6, size.height * 0.4),
+        size.width * 0.5, const Color(0xFF1E8050).withValues(alpha: 0.08));
   }
 
   @override
-  Widget build(BuildContext context) {
-    return RepaintBoundary(
-      child: GestureDetector(
-        onTap: () => context.push('/provider', extra: widget.provider),
-        child: Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Avatar
-                Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: _avatarColor(widget.provider.category),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  clipBehavior: Clip
-                      .antiAlias, // Important for CachedNetworkImage corners
-                  child:
-                      widget.provider.avatarUrl != null &&
-                          widget.provider.avatarUrl!.isNotEmpty
-                      ? CachedNetworkImage(
-                          imageUrl: widget.provider.avatarUrl!,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => Center(
-                            child: SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(
-                                color: AppColors.sage.withAlpha(128),
-                              ),
-                            ),
-                          ),
-                          errorWidget: (context, url, error) => Center(
-                            child: Text(
-                              widget.provider.emoji,
-                              style: const TextStyle(fontSize: 24),
-                            ),
-                          ),
-                        )
-                      : Center(
-                          child: Text(
-                            widget.provider.emoji,
-                            style: const TextStyle(fontSize: 24),
-                          ),
-                        ),
-                ),
-                const SizedBox(width: 14),
-
-                // info
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.provider.name,
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        '⭐ ${widget.provider.rating} · ${widget.provider.category} · ${widget.provider.distance}',
-                        style: Theme.of(
-                          context,
-                        ).textTheme.bodySmall?.copyWith(color: AppColors.muted),
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
-                        children: widget.provider.services
-                            .take(3)
-                            .map(
-                              (s) => Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 3,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: AppColors.bg,
-                                  borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(color: AppColors.line),
-                                ),
-                                child: Text(
-                                  s.name,
-                                  style: GoogleFonts.dmSans(
-                                    fontSize: 11,
-                                    color: AppColors.ink2,
-                                  ),
-                                ),
-                              ),
-                            )
-                            .toList(),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-
-                // price + availability
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    IconButton(
-                      icon: Icon(
-                        _isFav ? Icons.favorite : Icons.favorite_border,
-                        color: _isFav ? AppColors.red : AppColors.muted,
-                        size: 22,
-                      ),
-                      onPressed: () {
-                        FavoritesService.instance.toggleFavorite(
-                          widget.provider.id,
-                        );
-                      },
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
-                    const SizedBox(height: 8),
-                    if (_minPrice != null)
-                      Text(
-                        'From \$${_minPrice!.toStringAsFixed(0)}',
-                        style: GoogleFonts.dmSans(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.ink,
-                        ),
-                      ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Available today',
-                      style: GoogleFonts.dmSans(
-                        fontSize: 12,
-                        color: AppColors.sage,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-class HomeScreen extends StatefulWidget {
+// Old _ProviderCard removed
+
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends ConsumerState<HomeScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _selectedCategory = 'All';
 
@@ -233,106 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
     'Dental',
     'Fitness',
   ];
-  List<ServiceProvider> _allProviders = [];
 
-  // Memoized derived lists — updated only when source data changes
-  List<ServiceProvider> _filteredProviders = [];
-  List<Map<String, dynamic>> _allServices = [];
-
-  bool _isLoading = true;
-  String _firstName = 'User';
-  String _initial = 'U';
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchData();
-  }
-
-  /// Recomputes both memoized lists. Call after any change to
-  /// `_allProviders` or `_selectedCategory`.
-  void _recompute() {
-    _filteredProviders = _selectedCategory == 'All'
-        ? List.of(_allProviders)
-        : _allProviders.where((p) => p.category == _selectedCategory).toList();
-
-    _allServices = [
-      for (final provider in _allProviders)
-        for (final svc in provider.services)
-          {'service': svc, 'provider': provider},
-    ];
-  }
-
-  Future<void> _fetchData() async {
-    dev.Timeline.startSync('HomeScreen._fetchData');
-    try {
-      final user = Supabase.instance.client.auth.currentUser;
-      if (user != null) {
-        dev.Timeline.startSync('HomeScreen.fetchUserName');
-        try {
-          final userData = await Supabase.instance.client
-              .from('users')
-              .select('first_name')
-              .eq('user_id', user.id)
-              .maybeSingle();
-          if (mounted) {
-            setState(() {
-              _firstName =
-                  (userData?['first_name'] as String?) ??
-                  (user.userMetadata?['first_name'] as String?) ??
-                  'User';
-              _initial = _firstName.isNotEmpty
-                  ? _firstName[0].toUpperCase()
-                  : 'U';
-            });
-          }
-        } finally {
-          dev.Timeline.finishSync();
-        }
-      }
-
-      dev.Timeline.startSync('HomeScreen.fetchProviders');
-      late final List rawProviders;
-      try {
-        rawProviders = await Supabase.instance.client
-            .from('providers')
-            .select(
-              'provider_id, business_name, average_rating, total_reviews, address, category, emoji, avatar_url, services(service_id, provider_id, service_name, description, price, duration_minutes, buffer_minutes)',
-            );
-      } finally {
-        dev.Timeline.finishSync();
-      }
-
-      dev.Timeline.startSync('HomeScreen.parseProviders');
-      late final List<ServiceProvider> providers;
-      try {
-        providers = rawProviders
-            .map((p) => ServiceProvider.fromJson(p as Map<String, dynamic>))
-            .toList();
-      } finally {
-        dev.Timeline.finishSync();
-      }
-
-      if (mounted) {
-        setState(() {
-          _allProviders = providers;
-          _recompute();
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to load providers: $e')));
-      }
-    } finally {
-      dev.Timeline.finishSync(); // HomeScreen._fetchData
-    }
-  }
 
   @override
   void dispose() {
@@ -359,9 +81,37 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // 1. Auth bindings
+    final authState = ref.watch(authProvider);
+    final String firstName = authState is AuthAuthenticated 
+      ? authState.fullName.split(' ').first 
+      : 'User';
+    final String initial = firstName.isNotEmpty ? firstName[0].toUpperCase() : 'U';
+
+    // 2. Data bindings
+    final feedAsync = ref.watch(homeFeedProvider);
+    final bool _isLoading = feedAsync.isLoading;
+    final List<ServiceProvider> _allProviders = feedAsync.valueOrNull ?? [];
+    
+    // 3. Derived local state
+    final List<ServiceProvider> _filteredProviders = _selectedCategory == 'All'
+        ? List.of(_allProviders)
+        : _allProviders.where((p) => p.category == _selectedCategory).toList();
+
+    final List<Map<String, dynamic>> _allServices = [
+      for (final provider in _allProviders)
+        for (final svc in provider.services)
+          {'service': svc, 'provider': provider},
+    ];
+
     return Scaffold(
-      body: CustomScrollView(
-        slivers: [
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: CustomPaint(painter: _AmbientPainter()),
+          ),
+          CustomScrollView(
+            slivers: [
           // ── App Bar ──────────────────────────────────
           SliverAppBar(
             pinned: true,
@@ -398,7 +148,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     radius: 17,
                     backgroundColor: AppColors.sage,
                     child: Text(
-                      _initial,
+                      initial,
                       style: GoogleFonts.dmSans(
                         color: Colors.white,
                         fontWeight: FontWeight.w600,
@@ -423,7 +173,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     text: TextSpan(
                       children: [
                         TextSpan(
-                          text: 'Good morning, $_firstName ',
+                          text: 'Good morning, $firstName ',
                           style: GoogleFonts.fraunces(
                             fontSize: 28,
                             fontWeight: FontWeight.w500,
@@ -502,7 +252,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   return GestureDetector(
                     onTap: () => setState(() {
                       _selectedCategory = cat;
-                      _recompute();
                     }),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 150),
@@ -695,10 +444,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 itemCount: _filteredProviders.length,
                 separatorBuilder: (_, index) => const SizedBox(height: 12),
                 itemBuilder: (context, i) =>
-                    _ProviderCard(provider: _filteredProviders[i]),
+                    AnimatedProviderCard(index: i, provider: _filteredProviders[i]),
               ),
             ),
-        ],
+          ],
+        ),
+      ],
       ),
     );
   }

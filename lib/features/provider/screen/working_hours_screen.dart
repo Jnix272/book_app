@@ -1,18 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app_theme.dart';
-import '../../../models/models.dart';
-import '../../../core/services/provider_session.dart';
+import '../../../domain/models/models.dart';
+import '../../../providers/provider_dashboard_providers.dart';
+import '../../../providers/repository_providers.dart';
 
-class WorkingHoursScreen extends StatefulWidget {
+class WorkingHoursScreen extends ConsumerStatefulWidget {
   const WorkingHoursScreen({super.key});
 
   @override
-  State<WorkingHoursScreen> createState() => _WorkingHoursScreenState();
+  ConsumerState<WorkingHoursScreen> createState() => _WorkingHoursScreenState();
 }
 
-class _WorkingHoursScreenState extends State<WorkingHoursScreen> {
+class _WorkingHoursScreenState extends ConsumerState<WorkingHoursScreen> {
   List<WorkingHours> _hours = [];
   bool _isLoading = true;
   bool _isSaving = false;
@@ -24,23 +25,16 @@ class _WorkingHoursScreenState extends State<WorkingHoursScreen> {
   }
 
   Future<void> _fetchWorkingHours() async {
-    // ProviderSession caches the provider_id so subsequent calls are free.
-    final providerId = await ProviderSession.instance.providerId;
+    final providerId = ref.read(currentProviderIdProvider);
     if (providerId == null) {
       if (mounted) setState(() => _isLoading = false);
       return;
     }
 
     try {
-      final rows = await Supabase.instance.client
-          .from('provider_schedules')
-          .select()
-          .eq('provider_id', providerId)
-          .order('day_of_week');
+      final hours = await ref.read(scheduleRepositoryProvider).getWorkingHours(providerId);
 
-      // DB uses 0=Sunday … 6=Saturday (PostgreSQL EXTRACT(DOW) convention).
-      // DayOfWeek enum is ordered: monday(0) … sunday(6), so we map by dbIndex.
-      if (rows.isEmpty) {
+      if (hours.isEmpty) {
         _hours = List.generate(7, (i) {
           final day = DayOfWeek.values[i];
           // Default Mon–Fri open
@@ -55,18 +49,14 @@ class _WorkingHoursScreenState extends State<WorkingHoursScreen> {
       } else {
         _hours = List.generate(7, (i) {
           final day = DayOfWeek.values[i];
-          // Match by dbIndex, NOT by list index.
-          final row = (rows as List)
-              .cast<Map<String, dynamic>>()
-              .where((r) => r['day_of_week'] == day.dbIndex)
-              .firstOrNull;
+          final row = hours.where((r) => r.day == day).firstOrNull;
 
           if (row != null) {
             return WorkingHours(
               day: day,
-              isOpen: row['is_active'] as bool,
-              startTime: _parseTime(row['start_time'] as String),
-              endTime: _parseTime(row['end_time'] as String),
+              isOpen: row.isOpen,
+              startTime: row.startTime,
+              endTime: row.endTime,
             );
           }
           return WorkingHours(
@@ -84,14 +74,6 @@ class _WorkingHoursScreenState extends State<WorkingHoursScreen> {
       if (mounted) setState(() => _isLoading = false);
     }
   }
-
-  TimeOfDay _parseTime(String t) {
-    final parts = t.split(':');
-    return TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
-  }
-
-  String _formatTime(TimeOfDay t) =>
-      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}:00';
 
   int _toMinutes(TimeOfDay t) => t.hour * 60 + t.minute;
 
@@ -113,7 +95,7 @@ class _WorkingHoursScreenState extends State<WorkingHoursScreen> {
       }
     }
 
-    final providerId = await ProviderSession.instance.providerId;
+    final providerId = ref.read(currentProviderIdProvider);
     if (providerId == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -133,23 +115,10 @@ class _WorkingHoursScreenState extends State<WorkingHoursScreen> {
     setState(() => _isSaving = true);
 
     try {
-      final upsertPayload = _hours
-          .map(
-            (h) => {
-              'provider_id': providerId,
-              'day_of_week': h.day.dbIndex, // use dbIndex, not enum index
-              'start_time': _formatTime(h.startTime),
-              'end_time': _formatTime(h.endTime),
-              'is_active': h.isOpen,
-            },
-          )
-          .toList();
-
-      await Supabase.instance.client
-          .from('provider_schedules')
-          .upsert(upsertPayload, onConflict: 'provider_id,day_of_week');
+      await ref.read(scheduleRepositoryProvider).updateWorkingHours(providerId, _hours);
 
       if (mounted) {
+        ref.invalidate(providerScheduleProvider);
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
